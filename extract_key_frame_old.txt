@@ -1,0 +1,72 @@
+def extract_key_frames(video_path, mat, dims):
+
+    # Llamada a la función de apertura del video
+    cap = open_video(video_path)
+
+    # Obteneción del primer frame para tener la referencia y comprobacion de la visualización del video
+    ret, frame_ref = cap.read()
+    if not ret:
+        return {"error": "Video vacío."}
+
+    w, h = dims
+
+    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (w, h))
+
+    # Llamada a la función de procesamiento de imagen
+    blur_ref = process_image(frame_ref_warped)
+
+    key_frames = [] # Lista de los frames claves (posteriores a haber hecho un movimiento)
+    frames_since_motion = 0 # Contador de frames que han pasado sin que haya movimiento
+    motion_detected = False # Detector de movimiento
+
+    PIXEL_THRESHOLD = 30
+    AREA_THRESHOLD_START = 120000
+    AREA_THRESHOLD_END = 40000
+    ESTABILITY_FRAMES = 40
+
+    # Bucle de procesamiento del video, lee frames mientras el video este abierto
+    while cap.isOpened():
+        ret, frame_curr = cap.read()
+        if not ret: break  # Final del video
+
+        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (w, h))
+
+        # Procesamiento del frame actual
+        blur_curr = process_image(frame_curr_warped)
+
+        # Diferencia y Umbralización
+        frame_diff = cv2.absdiff(blur_ref, blur_curr)
+        #cv2.imshow("Diferencia de Frames (DEBUG)", frame_diff)
+        #cv2.waitKey(0)
+        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)
+
+        # 3. Detección de Contornos (Movimiento)
+        # Contar el área total de movimiento detectado
+        motion_area = np.sum(thresh == 255)
+
+        if motion_area > 40000:  # Umbral de área
+            motion_detected = True
+            frames_since_motion = 0
+        else:
+            frames_since_motion += 1
+
+        print(f"DEBUG: Frames since motion: {frames_since_motion}")
+        print(f"DEBUG: Motion area: {motion_area}")
+        print("/////////////////////////////////")
+
+        # 4. Extracción del Frame Clave y Reinicio
+        if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 15 frames de estabilidad
+            # El frame actual es el frame clave estable
+            frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
+            key_frames.append(frame_rotate)
+
+            # Actualizar la referencia para el siguiente movimiento
+            alpha = 0.90
+            beta = 1.0 - alpha
+
+
+            blur_ref = cv2.addWeighted(blur_ref, alpha, blur_curr, beta, 0)
+            motion_detected = False
+
+    cap.release()
+    return key_frames
