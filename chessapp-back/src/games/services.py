@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
+from typing import List
 
 TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 fs = FileSystemStorage(location=TEMP_VIDEOS_LOCATION)
@@ -128,6 +129,38 @@ def get_matriz(coords):
     # 3. Devolver la Matriz y las Dimensiones de Salida
     return mat, (NORMALIZED_SIZE, NORMALIZED_SIZE)
 
+def save_key_frames(key_frames, file_name):
+    if not key_frames:
+        print("Lista de frames vacia")
+        return False
+
+    try:
+        key_frames_array = np.array(key_frames)
+        np.savez_compressed(file_name, frames=key_frames_array)
+        print(f"Frames clave almacenados en {file_name}")
+        return True
+
+    except Exception as e:
+        print(f"Error al guardar los frames clave {e}")
+        return False
+
+
+def load_key_frames(file_name):
+    if not os.path.exists(file_name):
+        print("ERROR: No se pudo abrir el video.")
+        return []
+    try:
+        loaded_data = np.load(file_name)
+
+        key_frames_array = loaded_data["frames"]
+
+        key_frames = [frame for frame in key_frames_array]
+
+        return key_frames
+
+    except Exception as e:
+        print(f"Error al cargar los frames clave {e}")
+        return []
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
 def extract_key_frames(video_path, mat, dims):
@@ -152,9 +185,9 @@ def extract_key_frames(video_path, mat, dims):
     motion_detected = False # Detector de movimiento
 
     PIXEL_THRESHOLD = 30
-    AREA_THRESHOLD_START = 40000
-    AREA_THRESHOLD_END = 12000
-    ESTABILITY_FRAMES = 40
+    AREA_THRESHOLD_START = 150000
+    AREA_THRESHOLD_END = 25000
+    ESTABILITY_FRAMES = 10
 
     fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
 
@@ -201,16 +234,18 @@ def extract_key_frames(video_path, mat, dims):
 
         print(f"DEBUG: Frames since motion: {frames_since_motion}")
         print(f"DEBUG: Motion area: {motion_area}")
-        print("/////////////////////////////////")
 
         # 4. Extracción del Frame Clave y Reinicio
-        if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 40 frames de estabilidad
+        if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 20 frames de estabilidad
             # El frame actual es el frame clave estable
             frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
+            print(f"DEBUG: Frame Guardado!")
             key_frames.append(frame_rotate)
             blur_ref = blur_curr.copy()
             motion_detected = False
             frames_since_motion = 0
+
+        print("/////////////////////////////////")
 
     cap.release()
     return key_frames
