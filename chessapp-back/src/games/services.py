@@ -133,11 +133,18 @@ def save_key_frames(key_frames, file_name):
     if not key_frames:
         print("Lista de frames vacia")
         return False
+    try:
+        os.makedirs("media/temp_frames", exist_ok=True)
+    except Exception as e:
+        print(f"Error en la creación del directorio {e}")
+        return False
+
+    path = os.path.join("media/temp_frames", file_name)
 
     try:
         key_frames_array = np.array(key_frames)
-        np.savez_compressed(file_name, frames=key_frames_array)
-        print(f"Frames clave almacenados en {file_name}")
+        np.savez_compressed(path, frames=key_frames_array)
+        print(f"Frames clave almacenados en {path}")
         return True
 
     except Exception as e:
@@ -146,11 +153,14 @@ def save_key_frames(key_frames, file_name):
 
 
 def load_key_frames(file_name):
-    if not os.path.exists(file_name):
-        print("ERROR: No se pudo abrir el video.")
+
+    path = os.path.join("media/temp_frames", file_name)
+
+    if not os.path.exists(path):
+        print("ERROR: No se pudo abrir el archivo.")
         return []
     try:
-        loaded_data = np.load(file_name)
+        loaded_data = np.load(path)
 
         key_frames_array = loaded_data["frames"]
 
@@ -161,6 +171,39 @@ def load_key_frames(file_name):
     except Exception as e:
         print(f"Error al cargar los frames clave {e}")
         return []
+
+
+def show_key_frames(key_frames):
+    if isinstance(key_frames, dict) and key_frames.get("error"):
+        print(f"ERROR: {key_frames['error']}")
+        return False
+
+    print(f"Se extrajeron {len(key_frames)} frames clave.")
+
+    for i, frame in enumerate(key_frames):
+
+        cv2.imshow(f"Jugada {i + 1}", frame)
+
+        key = cv2.waitKey(0) & 0xFF
+
+        if key == ord('q') or key == 27:  # 'q' o ESC para salir del bucle
+            break
+
+    cv2.destroyAllWindows()  # Cierra todas las ventanas de OpenCV al finalizar
+
+def delete_key_frames(file_name):
+    if not os.path.exists(file_name):
+        print("ERROR: No se pudo abrir el archivo.")
+        return False
+
+    try:
+        os.remove(file_name)
+        print(f"Frames clave {file_name} eliminado.")
+        return True
+    except Exception as e:
+        print(f"Error al eliminar los frames clave {e}")
+        return False
+
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
 def extract_key_frames(video_path, mat, dims):
