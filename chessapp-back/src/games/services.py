@@ -204,6 +204,36 @@ def delete_key_frames(file_name):
         print(f"Error al eliminar los frames clave {e}")
         return False
 
+def increase_sharpness(frame, blur_ksize: int = 21, weight: float = 1.5, threshold: int = 0):
+    if blur_ksize % 2 == 0:
+        raise ValueError("blur_ksize debe ser impar")
+
+    is_color = len(frame.shape) == 3
+    gray_image = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if is_color else frame.copy()
+
+    blurred = cv2.GaussianBlur(gray_image, (blur_ksize, blur_ksize), 0)
+
+    # 2. Calcular la máscara de detalles (diferencia entre original y desenfocada)
+    # Convertimos a float para evitar problemas de saturación con valores negativos
+    detail_mask = cv2.subtract(gray_image.astype(np.float32), blurred.astype(np.float32))
+
+    # 3. Aplicar umbral a la máscara de detalles (opcional para reducir ruido)
+    if threshold > 0:
+        detail_mask = np.where(np.abs(detail_mask) < threshold, 0, detail_mask)
+
+    # 4. Sumar la máscara de detalles (amplificada) a la imagen original
+    # Convertimos de nuevo a tipo de imagen para la suma
+    sharpened_image = cv2.addWeighted(gray_image.astype(np.float32), 1.0, detail_mask, weight, 0)
+
+    # Asegurarse de que los valores estén en el rango [0, 255] y convertir a uint8
+    sharpened_image = np.clip(sharpened_image, 0, 255).astype(np.uint8)
+
+    # Si la imagen original era a color, convertimos de nuevo a color
+    if is_color:
+        sharpened_image = cv2.cvtColor(sharpened_image, cv2.COLOR_GRAY2BGR)
+
+    return sharpened_image
+
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
 def extract_key_frames(video_path, mat, dims):
@@ -281,6 +311,9 @@ def extract_key_frames(video_path, mat, dims):
         # 4. Extracción del Frame Clave y Reinicio
         if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 20 frames de estabilidad
             # El frame actual es el frame clave estable
+
+            #frame_sharp = increase_sharpness(blur_curr)
+            #frame_rotate = cv2.rotate(frame_sharp, cv2.ROTATE_180)
             frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
             print(f"DEBUG: Frame Guardado!")
             key_frames.append(frame_rotate)

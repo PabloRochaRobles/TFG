@@ -16,22 +16,22 @@ from src.games.services import get_matriz
 
 def visualize_key_frames(video_path):
 
-    path_frames = os.path.join('media/temp_frames', "test1.npz")
+    path_frames = os.path.join('media/temp_frames', "test2.npz")
 
     if os.path.exists(path_frames):
-        key_frames = load_key_frames("test1.npz")
+        key_frames = load_key_frames("test2.npz")
         show_key_frames(key_frames)
     else:
         coords = get_corners(video_path)
         mat, dims = get_matriz(coords)
         key_frames = extract_key_frames(video_path, mat, dims)
-        save_key_frames(key_frames, "test1")
+        save_key_frames(key_frames, "test2")
         show_key_frames(key_frames)
 
 
 if __name__ == '__main__':
     # RUTA: Asegúrate de que esta ruta apunte a un video de prueba válido en tu PC
-    RUTA_VIDEO_PRUEBA = "C:/Users/Admin/Videos/Ajedrez/test1.mp4"
+    RUTA_VIDEO_PRUEBA = "C:/Users/Admin/Videos/Ajedrez/test2.mp4"
 
     # Ejecutar la prueba
     visualize_key_frames(RUTA_VIDEO_PRUEBA)
