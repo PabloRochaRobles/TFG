@@ -129,50 +129,51 @@ def get_matriz(coords):
     # 3. Devolver la Matriz y las Dimensiones de Salida
     return mat, (NORMALIZED_SIZE, NORMALIZED_SIZE)
 
+# Función para el guardado de todos los frames detectados como clave (en los que se han realizado movimiento)
 def save_key_frames(key_frames, file_name):
-    if not key_frames:
+    if not key_frames:                                              # Si la lista de frames esta
         print("Lista de frames vacia")
         return False
     try:
-        os.makedirs("media/temp_frames", exist_ok=True)
+        os.makedirs("media/temp_frames", exist_ok=True)       # Creación si fuera necesario de la carpeta donde se almacenan los frames clave
     except Exception as e:
-        print(f"Error en la creación del directorio {e}")
+        print(f"Error en la creación del directorio {e}")           # Si da algún error en la creación de la carpeta, salta esta excepción
         return False
 
-    path = os.path.join("media/temp_frames", file_name)
+    path = os.path.join("media/temp_frames", file_name)             # Variable que almacena el path completo incluyendo el nombre del archivo por ser creado
 
     try:
         key_frames_array = np.array(key_frames)
-        np.savez_compressed(path, frames=key_frames_array)
-        print(f"Frames clave almacenados en {path}")
+        np.savez_compressed(path, frames=key_frames_array)          # Guarda el array en el path indicado en un archivo tipo .npz
+        print(f"DEBUG: Frames clave almacenados en {path}")
         return True
 
     except Exception as e:
-        print(f"Error al guardar los frames clave {e}")
+        print(f"DEBUG: Error al guardar los frames clave {e}")      # Si da fallo en el almacenamiento, salta esta excepción
         return False
 
-
+# Función para el cargado de todos los frames detectados como clave en un array
 def load_key_frames(file_name):
 
-    path = os.path.join("media/temp_frames", file_name)
+    path = os.path.join("media/temp_frames", file_name)         # Variable que almacena el path completo incluyendo el nombre del archivo del cual se quiere extraer los frames
 
     if not os.path.exists(path):
-        print("ERROR: No se pudo abrir el archivo.")
+        print("ERROR: No se pudo abrir el archivo.")            # Si no existe el path, se notifica el error. Se devuelve un array vacio
         return []
     try:
-        loaded_data = np.load(path)
+        loaded_data = np.load(path)                             # Carga los datos del .npz en la variable
 
-        key_frames_array = loaded_data["frames"]
+        key_frames_array = loaded_data["frames"]                # Extrae los datos de la variable y los almacena en un array
 
-        key_frames = [frame for frame in key_frames_array]
+        key_frames = [frame for frame in key_frames_array]      # Recorre el array extrae todos los frames almacenados
 
-        return key_frames
+        return key_frames                                       # Devuelve la lista de frames clave
 
     except Exception as e:
-        print(f"Error al cargar los frames clave {e}")
-        return []
+        print(f"Error al cargar los frames clave {e}")          # Si da fallo al sacar los frame claves salta la excepción
+        return []                                               # Devuelve la lista vacia
 
-
+# Funcion para la muestra de todos los frames detectados como clave
 def show_key_frames(key_frames):
     if isinstance(key_frames, dict) and key_frames.get("error"):
         print(f"ERROR: {key_frames['error']}")
@@ -278,8 +279,7 @@ def extract_key_frames(video_path, mat, dims):
 
         # Diferencia y Umbralización
         frame_diff = cv2.absdiff(blur_ref, blur_curr)
-        #cv2.imshow("Diferencia de Frames (DEBUG)", frame_diff)
-        #cv2.waitKey(0)
+
         _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)
 
         # 3. Detección de Contornos (Movimiento)
@@ -312,13 +312,9 @@ def extract_key_frames(video_path, mat, dims):
         if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 20 frames de estabilidad
             # El frame actual es el frame clave estable
 
-            frame_sharp = increase_sharpness(blur_curr)
-            frame_rotate = cv2.rotate(frame_sharp, cv2.ROTATE_180)
-            #frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
+            frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)
 
-            cv2.imshow("Diferencia de Frames Borroso (DEBUG)", cv2.rotate(blur_curr, cv2.ROTATE_180))
-            cv2.waitKey(0)
-            cv2.imshow("Diferencia de Frames Nitido(DEBUG)", cv2.rotate(frame_sharp, cv2.ROTATE_180))
+            cv2.imshow(f"DEBUG: Diferencia de Frames Normal", cv2.rotate(frame_curr_warped, cv2.ROTATE_180))
             cv2.waitKey(0)
 
             print(f"DEBUG: Frame Guardado!")
