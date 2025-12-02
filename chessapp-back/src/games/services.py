@@ -192,19 +192,19 @@ def show_key_frames(key_frames):
     cv2.destroyAllWindows()  # Cierra todas las ventanas de OpenCV al finalizar
 
 def delete_key_frames(file_name):
-    if not os.path.exists(file_name):
+    if not os.path.exists(os.path.join("media/temp_frames", file_name)):
         print("ERROR: No se pudo abrir el archivo.")
         return False
 
     try:
-        os.remove(file_name)
+        os.remove(os.path.join("media/temp_frames", file_name))
         print(f"Frames clave {file_name} eliminado.")
         return True
     except Exception as e:
         print(f"Error al eliminar los frames clave {e}")
         return False
 
-def increase_sharpness(frame, blur_ksize: int = 21, weight: float = 1.5, threshold: int = 0):
+def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold: int = 0):
     if blur_ksize % 2 == 0:
         raise ValueError("blur_ksize debe ser impar")
 
@@ -312,9 +312,15 @@ def extract_key_frames(video_path, mat, dims):
         if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 20 frames de estabilidad
             # El frame actual es el frame clave estable
 
-            #frame_sharp = increase_sharpness(blur_curr)
-            #frame_rotate = cv2.rotate(frame_sharp, cv2.ROTATE_180)
-            frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
+            frame_sharp = increase_sharpness(blur_curr)
+            frame_rotate = cv2.rotate(frame_sharp, cv2.ROTATE_180)
+            #frame_rotate = cv2.rotate(blur_curr, cv2.ROTATE_180)
+
+            cv2.imshow("Diferencia de Frames Borroso (DEBUG)", cv2.rotate(blur_curr, cv2.ROTATE_180))
+            cv2.waitKey(0)
+            cv2.imshow("Diferencia de Frames Nitido(DEBUG)", cv2.rotate(frame_sharp, cv2.ROTATE_180))
+            cv2.waitKey(0)
+
             print(f"DEBUG: Frame Guardado!")
             key_frames.append(frame_rotate)
             blur_ref = blur_curr.copy()
