@@ -7,7 +7,6 @@ TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 TEMP_FRAMES_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
 
 NORMALIZED_SIZE = 1000
-
 PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
@@ -41,29 +40,24 @@ def process_image(frame):
     blur = cv2.GaussianBlur(gray, ksize=(21, 21), sigmaX=0)     # Se le aplica un filtro Gaussiano a la imagen en escala de grises
     return blur                                                 # Devuelve el frame con estos filtros aplicados
 
+# Función que registra las coordenadas al hacer clic
 def click_event(event, x, y, flags, param):
-    """
-    Función de callback del ratón que registra las coordenadas al hacer clic.
-    """
+
     global PUNTOS_ORIGEN
 
-    # Solo procesa el evento si el botón izquierdo del ratón fue presionado
-    if event == cv2.EVENT_LBUTTONDOWN:
-        if len(PUNTOS_ORIGEN) < MAX_PUNTOS:
-            PUNTOS_ORIGEN.append((x, y))
-            print(f"Punto {len(PUNTOS_ORIGEN)}: ({x}, {y})")
-
-            # Dibujar un círculo en el punto seleccionado para dar feedback al usuario
-            img_copy = param[0]
-            cv2.circle(img_copy, (x, y), 5, (0, 0, 255), -1)  # Círculo rojo
-            cv2.putText(img_copy, str(len(PUNTOS_ORIGEN)), (x + 10, y - 10),
+    if event == cv2.EVENT_LBUTTONDOWN:                                                  # Si el botón izquierdo del ratón fue pulsado:
+        if len(PUNTOS_ORIGEN) < MAX_PUNTOS:                                             # Si no se han pulsado el número máximo de puntos posibles
+            PUNTOS_ORIGEN.append((x, y))                                                    # Añade las coordenadas seleccionadas
+            print(f"Punto {len(PUNTOS_ORIGEN)}: ({x}, {y})")                                # Se muestra cuáles son esas coordenadas
+            img_copy = param[0]                                                             # Se copia la imagen
+            cv2.circle(img_copy, (x, y), 5, (0, 0, 255), -1)                                # Se muestra la imagen con un círculo rojo donde se ha pulsado
+            cv2.putText(img_copy, str(len(PUNTOS_ORIGEN)), (x + 10, y - 10),                # Se muestra un número junto al círculo indicando que número de pulsación es
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            cv2.imshow(VENTANA_NOMBRE, img_copy)
+            cv2.imshow(VENTANA_NOMBRE, img_copy)                                            # Se muestran los cambios realizados
 
-        if len(PUNTOS_ORIGEN) == MAX_PUNTOS:
-            # Una vez que tenemos los 4 puntos, cerramos la ventana
-            cv2.destroyWindow(VENTANA_NOMBRE)
-            print("Puntos de origen capturados.")
+        if len(PUNTOS_ORIGEN) == MAX_PUNTOS:                                            # Si se ha pulsado el número máximo de puntos posibles:
+            cv2.destroyWindow(VENTANA_NOMBRE)                                           # Se cierran todas las ventanas
+            print("Puntos de origen capturados.")                                       # Se informa que todos los puntos han sido captados
 
 # Función para enmarcar el tablero de ajedrez haciendo que el usuario pulse las esquinas de este
 def get_corners(video_path):
@@ -93,21 +87,17 @@ def get_corners(video_path):
         print("ERROR: La selección fue cancelada o incompleta.")                            # Informar del error
         return None                                                                         # No se devuelve nada
 
+# Función que transforma el cómo se ve el tablero tras aplicarle el cambio de perspectiva arreglando que la imagen no se distorsione
 def get_matriz(coords):
-    destination_points = np.float32([
-        [0, NORMALIZED_SIZE - 1],  # Superior Izquierda
-        [NORMALIZED_SIZE - 1, NORMALIZED_SIZE - 1],  # Inferior Derecha
-        [NORMALIZED_SIZE - 1, 0],  # Superior Derecha
-        [0, 0],  # Inferior Izquierda
+    destination_points = np.float32([                                   # Conjunto de coordenadas de destino
+        [0, NORMALIZED_SIZE - 1],                                           # Superior Izquierda
+        [NORMALIZED_SIZE - 1, NORMALIZED_SIZE - 1],                         # Inferior Derecha
+        [NORMALIZED_SIZE - 1, 0],                                           # Superior Derecha
+        [0, 0],                                                             # Inferior Izquierda
     ])
 
-    # 2. Calcular la Matriz de Transformación (M)
-    # cv2.getPerspectiveTransform calcula la matriz 3x3 que mapea los puntos de origen
-    # (source_points) a los puntos de destino (destination_points).
-    mat = cv2.getPerspectiveTransform(coords, destination_points)
-
-    # 3. Devolver la Matriz y las Dimensiones de Salida
-    return mat, (NORMALIZED_SIZE, NORMALIZED_SIZE)
+    mat = cv2.getPerspectiveTransform(coords, destination_points)       # Transformación de los puntos marcados por el usuario a los puntos de destino
+    return mat                                                          # Devuelve la matriz ya transformada
 
 # Función para el guardado de todos los frames detectados como clave (en los que se han realizado movimiento)
 def save_key_frames(key_frames, file_name):
@@ -217,7 +207,7 @@ def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold
 
     return sharpened_image
 
-# Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
+# Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imágenes.
 def extract_key_frames(video_path):
 
     # Variables de la función
@@ -229,8 +219,7 @@ def extract_key_frames(video_path):
     stability_frames = 10                                                   # Umbral que debe superarse para considerar que el tablero ya ha estado en estabilidad y la jugada anterior terminó
 
     coords = get_corners(video_path)                                        # Llamada a la función obtener las esquinas del tablero
-    mat, dims = get_matriz(coords)                                          # Llamada a la función de la matriz de transformación
-    w, h = dims                                                             # Almacena los valores de la variable dims en dos variables
+    mat = get_matriz(coords)                                                # Llamada a la función de la matriz de transformación                                                            # Almacena los valores de la variable dims en dos variables
 
     video = open_video(video_path)                                          # Llamada a la función que abre el video y almacenamiento en la variable
     ret, frame_ref = video.read()                                           # Obtención del primer frame
@@ -238,8 +227,8 @@ def extract_key_frames(video_path):
     if not ret:
         return {f"DEBUG: error": "Video vacío."}                                    # Si no se pudo leer el frame, notifica del error
 
-    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (w, h))          # Modificación del frame alterando la perspectiva para visualizar solamente el tablero
-    blur_ref = process_image(frame_ref_warped)                              # Llamada a la función de procesamiento de imagen
+    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))          # Modificación del frame alterando la perspectiva para visualizar solamente el tablero
+    blur_ref = process_image(frame_ref_warped)                                                          # Llamada a la función de procesamiento de imagen
 
     fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)     # Algoritmo de substracción de fondo. Detectando los píxeles cambiantes y los estables
 
@@ -248,12 +237,12 @@ def extract_key_frames(video_path):
         if not ret:                                                         # Si devuelve falso, el video ha acabado
             break
 
-        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (w, h))    # Modificación del frame actual alterando la perspectiva para visualizar solamente el tablero
-        blur_curr = process_image(frame_curr_warped)                        # Procesamiento de la imagen del frame actual
-        fgmask = fgbg.apply(blur_curr)                                      # Almacena la máscara de movimiento en la variable
-        frame_diff = cv2.absdiff(blur_ref, blur_curr)                       # Cálculo de la diferencia absoluta entre el frame de referencia y el actual
-        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)   # Función que realiza la umbralización
-        motion_area = np.sum(fgmask > 0)                                    # Cuantificación del movimiento. Para detectar si se está realizando un movimiento o no
+        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))    # Modificación del frame actual alterando la perspectiva para visualizar solamente el tablero
+        blur_curr = process_image(frame_curr_warped)                                                    # Procesamiento de la imagen del frame actual
+        fgmask = fgbg.apply(blur_curr)                                                                  # Almacena la máscara de movimiento en la variable
+        frame_diff = cv2.absdiff(blur_ref, blur_curr)                                                   # Cálculo de la diferencia absoluta entre el frame de referencia y el actual
+        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)                               # Función que realiza la umbralización
+        motion_area = np.sum(fgmask > 0)                                                                # Cuantificación del movimiento. Para detectar si se está realizando un movimiento o no
 
         if motion_detected == False:                                        # En caso de que no se detecte un movimiento:
 
