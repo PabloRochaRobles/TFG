@@ -65,46 +65,33 @@ def click_event(event, x, y, flags, param):
             cv2.destroyWindow(VENTANA_NOMBRE)
             print("Puntos de origen capturados.")
 
+# Función para enmarcar el tablero de ajedrez haciendo que el usuario pulse las esquinas de este
 def get_corners(video_path):
 
     global PUNTOS_ORIGEN
-
     PUNTOS_ORIGEN = []
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("ERROR: No se pudo abrir el video.")
-        return None
+    video = open_video(video_path)                                                      # Llamada a la función de apertura del video
+    ret, frame = video.read()                                                           # Obtención del primer frame y de la variable de confirmación
+    video.release()                                                                     # Cierre del video
 
-    ret, frame = cap.read()
-    cap.release()
+    if not ret:                                                                         # Si da falso
+        print(f"DEBUG: Error. Video vacio")                                             # El frame está vacío
 
-    if not ret:
-        print("ERROR: El video no contiene frames.")
-        return None
-
-    # Clonar la imagen para dibujar círculos sin modificar el original
-    display_frame = frame.copy()
-
-    # 1. Crear la Ventana (CRÍTICO para setMouseCallback)
-    cv2.namedWindow(VENTANA_NOMBRE)
-
-    # 2. Asignar la función de callback. Pasamos [display_frame] como param
-    cv2.setMouseCallback(VENTANA_NOMBRE, click_event, param=[display_frame])
+    display_frame = frame.copy()                                                        # Clonación del frame para poder sobreescribirlo
+    cv2.namedWindow(VENTANA_NOMBRE)                                                     # Creación de una ventana
+    cv2.setMouseCallback(VENTANA_NOMBRE, click_event, param=[display_frame])            # Llamada a la función callback "click_event" pasandole el frames clonado
 
     print("\n>>> Orden de Clic: Esquina Superior Izquierda, Superior Derecha, Inferior Derecha, Inferior Izquierda <<<")
 
-    # 3. Mostrar la imagen y esperar por la entrada del ratón (Paso interactivo)
-    cv2.imshow(VENTANA_NOMBRE, display_frame)
-    cv2.waitKey(0)
+    cv2.imshow(VENTANA_NOMBRE, display_frame)                                           # Mostrar el frame
+    cv2.waitKey(0)                                                                      # Esperar a que se realicen las pulsaciones
 
-    # Si la ventana se cerró después de los 4 clics:
-    if len(PUNTOS_ORIGEN) == MAX_PUNTOS:
-        # 4. Devolver los puntos en el formato que OpenCV necesita
-        return np.float32(PUNTOS_ORIGEN)
-    else:
-        print("ERROR: La selección fue cancelada o incompleta.")
-        return None
+    if len(PUNTOS_ORIGEN) == MAX_PUNTOS:                                                # Si se han realizado MAX_PUNTOS pulsaciones:
+        return np.float32(PUNTOS_ORIGEN)                                                    # Se devuelven los puntos marcados
+    else:                                                                               # Si se ha realizado un número distinto de pulsaciones:
+        print("ERROR: La selección fue cancelada o incompleta.")                            # Informar del error
+        return None                                                                         # No se devuelve nada
 
 def get_matriz(coords):
     destination_points = np.float32([
@@ -230,7 +217,6 @@ def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold
 
     return sharpened_image
 
-
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
 def extract_key_frames(video_path):
 
@@ -250,7 +236,7 @@ def extract_key_frames(video_path):
     ret, frame_ref = video.read()                                           # Obtención del primer frame
 
     if not ret:
-        return {"error": "Video vacío."}                                    # Si no se pudo leer el frame, notifica del error
+        return {f"DEBUG: error": "Video vacío."}                                    # Si no se pudo leer el frame, notifica del error
 
     frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (w, h))          # Modificación del frame alterando la perspectiva para visualizar solamente el tablero
     blur_ref = process_image(frame_ref_warped)                              # Llamada a la función de procesamiento de imagen
@@ -266,51 +252,42 @@ def extract_key_frames(video_path):
         blur_curr = process_image(frame_curr_warped)                        # Procesamiento de la imagen del frame actual
         fgmask = fgbg.apply(blur_curr)                                      # Almacena la máscara de movimiento en la variable
         frame_diff = cv2.absdiff(blur_ref, blur_curr)                       # Cálculo de la diferencia absoluta entre el frame de referencia y el actual
+        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)   # Función que realiza la umbralización
+        motion_area = np.sum(fgmask > 0)                                    # Cuantificación del movimiento. Para detectar si se está realizando un movimiento o no
 
-        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)
+        if motion_detected == False:                                        # En caso de que no se detecte un movimiento:
 
-        # 3. Detección de Contornos (Movimiento)
-        # Contar el área total de movimiento detectado
-
-        # motion_area = np.sum(thresh == 255)
-        motion_area = np.sum(fgmask > 0)
-
-        if motion_detected == False:
-
-            if motion_area > area_threshold_start:
-                motion_detected = True
-                frames_since_motion = 0
-            elif motion_area < 500:
+            if motion_area > area_threshold_start:                          # Si se considera que esta ocurriendo un movimiento
+                motion_detected = True                                          # Se pone la variable que detecta el movimiento a true
+                frames_since_motion = 0                                         # Y se reestablece cuenta a 0
+            elif motion_area < 500:                                         # Si la imagen tiene muy poco movimiento
                 alpha = 0.99
                 beta = 1.0 - alpha
-                blur_ref = cv2.addWeighted(blur_ref, alpha, blur_curr, beta, 0)
+                blur_ref = cv2.addWeighted(blur_ref, alpha, blur_curr, beta, 0) # Calculo el promedio ponderado de la imagen de referencia y la actual
 
-        else:
+        else:                                                               # En caso de que se detecte un movimiento:
 
-            if motion_area < area_threshold_end:
-                frames_since_motion += 1
-            else:
-                frames_since_motion = 0
+            if motion_area < area_threshold_end:                            # Si el movimiento es menor al umbral
+                frames_since_motion += 1                                        # Se considera estable y se añade +1
+            else:                                                           # Si el movimiento es mayor o igual al umbral
+                frames_since_motion = 0                                         # No se considera estable y se reestablece a 0 el contador
 
         print(f"DEBUG: Frames since motion: {frames_since_motion}")
         print(f"DEBUG: Motion area: {motion_area}")
 
-        # 4. Extracción del Frame Clave y Reinicio
-        if motion_detected and frames_since_motion > stability_frames:
-            # El frame actual es el frame clave estable
+        if motion_detected and frames_since_motion > stability_frames:      # Si se ha detectado movimiento y se ha alcanzado el número de frames de estabilidad desde la jugada anterior:
 
-            frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)
+            frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)    # Se aplica una rotación de 180 grados al frame recortad
+            key_frames.append(frame_rotate)                                 # Se añade el frame rotado a la lista con los frames claves
+            blur_ref = blur_curr.copy()                                     # El frame actual pasa a ser el de referencia
+            motion_detected = False                                         # Se cambia la variable de movimiento detectado a falso
+            frames_since_motion = 0                                         # Se reestablece la cuenta de frames desde un movimiento
 
             cv2.imshow(f"DEBUG: Diferencia de Frames Normal", cv2.rotate(frame_curr_warped, cv2.ROTATE_180))
             cv2.waitKey(0)
-
             print(f"DEBUG: Frame Guardado!")
-            key_frames.append(frame_rotate)
-            blur_ref = blur_curr.copy()
-            motion_detected = False
-            frames_since_motion = 0
 
         print("/////////////////////////////////")
 
-    video.release()
-    return key_frames
+    video.release()                                                         # Cierra del video
+    return key_frames                                                       # Devuelve la lista con todos los frames claves
