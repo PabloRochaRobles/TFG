@@ -24,9 +24,8 @@ def visualize_key_frames(video_path):
         key_frames = load_key_frames("test3.npz")
         show_key_frames(key_frames)
     else:
-        coords = get_corners(video_path)
-        mat, dims = get_matriz(coords)
-        key_frames = extract_key_frames(video_path, mat, dims)
+
+        key_frames = extract_key_frames(video_path)
         save_key_frames(key_frames, "test3")
         show_key_frames(key_frames)
 

@@ -1,12 +1,10 @@
 import os
 import cv2
 import numpy as np
-from django.core.files.storage import FileSystemStorage
 from django.conf import settings
-from typing import List
 
 TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
-fs = FileSystemStorage(location=TEMP_VIDEOS_LOCATION)
+TEMP_FRAMES_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
 
 NORMALIZED_SIZE = 1000
 
@@ -14,39 +12,34 @@ PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 
-# Función de borrado de los videos obtenidos almacenados
+# Función de borrado de los videos obtenidos del FrontEnd y almacenados.
 def delete_temporary_videos(file_name):
-    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)
-    if os.path.exists(file_path):
+    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar
+    if os.path.exists(file_path):                                               # Si la ruta hasta el video existe
         try:
-            os.remove(file_path)
-            print(f"DEBUG: El video {file_name} ha sido eliminado")
+            os.remove(file_path)                                                # Se elimina el video especificado por la ruta
+            print(f"DEBUG: El video {file_name} ha sido eliminado")             # Se notifica que el video ha sido eliminado
             return True
-        except:
-            print(f"DEBUG: El video {file_name} no ha podido ser eliminado")
+        except Exception as e:                                                  # Si algo falla, salta la excepción
+            print(f"DEBUG: El video no ha podido ser eliminado: {e}")           # Se notifica cual es el fallo
             return False
-    else:
-        print(f"DEBUG: El video {file_name} no existe")
+    else:                                                                       # Si la ruta hasta el archivo no existe
+        print(f"DEBUG: El video {file_name} no existe")                         # Se notifica de que ese archivo no existe
         return True
 
-# Función de apertura del video y comprobacion de que se ha podido abrir.
+# Función de apertura del video de ajedrez
 def open_video(video_path):
-    video = cv2.VideoCapture(video_path)
-    if not video.isOpened():
-        return {"error": "No se pudo abrir el video."}
-    else:
-        return video
+    video = cv2.VideoCapture(video_path)                    # Abre el video y se almacena el manejador en la variable
+    if not video.isOpened():                                # Si no se ha conseguido abrir el video
+        return {"error": "No se pudo abrir el video."}      # Se notifica del error
+    else:                                                   # Si se consigue abrir el video
+        return video                                        # Se devuelve el manejador
 
-# Función para el procesamiento de una imagen
+# Función para el procesamiento de una imagen eliminando ruido y facilitando la detección de movimiento para recopilar los frames claves
 def process_image(frame):
-    # Pasar a escala de grises
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Filtro Gaussiano
-    blur = cv2.GaussianBlur(gray, ksize=(21, 21), sigmaX=0)
-
-
-    return blur
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)              # Se tranforma el frame al formato de escala de grises
+    blur = cv2.GaussianBlur(gray, ksize=(21, 21), sigmaX=0)     # Se le aplica un filtro Gaussiano a la imagen en escala de grises
+    return blur                                                 # Devuelve el frame con estos filtros aplicados
 
 def click_event(event, x, y, flags, param):
     """
@@ -135,12 +128,12 @@ def save_key_frames(key_frames, file_name):
         print("Lista de frames vacia")
         return False
     try:
-        os.makedirs("media/temp_frames", exist_ok=True)       # Creación si fuera necesario de la carpeta donde se almacenan los frames clave
+        os.makedirs(TEMP_FRAMES_LOCATION, exist_ok=True)       # Creación si fuera necesario de la carpeta donde se almacenan los frames clave
     except Exception as e:
         print(f"Error en la creación del directorio {e}")           # Si da algún error en la creación de la carpeta, salta esta excepción
         return False
 
-    path = os.path.join("media/temp_frames", file_name)             # Variable que almacena el path completo incluyendo el nombre del archivo por ser creado
+    path = os.path.join(TEMP_FRAMES_LOCATION, file_name)             # Variable que almacena el path completo incluyendo el nombre del archivo por ser creado
 
     try:
         key_frames_array = np.array(key_frames)
@@ -155,7 +148,7 @@ def save_key_frames(key_frames, file_name):
 # Función para el cargado de todos los frames detectados como clave en un array
 def load_key_frames(file_name):
 
-    path = os.path.join("media/temp_frames", file_name)         # Variable que almacena el path completo incluyendo el nombre del archivo del cual se quiere extraer los frames
+    path = os.path.join(TEMP_FRAMES_LOCATION, file_name)         # Variable que almacena el path completo incluyendo el nombre del archivo del cual se quiere extraer los frames
 
     if not os.path.exists(path):
         print("ERROR: No se pudo abrir el archivo.")            # Si no existe el path, se notifica el error. Se devuelve un array vacio
@@ -175,36 +168,38 @@ def load_key_frames(file_name):
 
 # Funcion para la muestra de todos los frames detectados como clave
 def show_key_frames(key_frames):
-    if isinstance(key_frames, dict) and key_frames.get("error"):
-        print(f"ERROR: {key_frames['error']}")
+    if isinstance(key_frames, dict) and key_frames.get("error"):    # Comprobación del tipo y del contenido
+        print(f"ERROR: {key_frames['error']}")                      # Si falla se notifica del error
         return False
 
-    print(f"Se extrajeron {len(key_frames)} frames clave.")
+    print(f"Se extrajeron {len(key_frames)} frames clave.")         # Si es correcto, se hace recuento del número de frames clave que hay
 
-    for i, frame in enumerate(key_frames):
+    for i, frame in enumerate(key_frames):                          # Bucle del que se van a extraer cada uno de los frames
 
-        cv2.imshow(f"Jugada {i + 1}", frame)
+        cv2.imshow(f"Jugada {i + 1}", frame)                        # Muestra el frame clave
 
-        key = cv2.waitKey(0) & 0xFF
+        key = cv2.waitKey(0) & 0xFF                                 # Espera a que se pulse una tecla para continuar con la función
 
-        if key == ord('q') or key == 27:  # 'q' o ESC para salir del bucle
+        if key == ord('q') or key == 27:                            # Si se pulsa 'q' o ESC se sale de la visualización del programa
             break
 
-    cv2.destroyAllWindows()  # Cierra todas las ventanas de OpenCV al finalizar
+    cv2.destroyAllWindows()                                         # Cierra todas las ventanas creadas al finalizar
 
+# Función para el borrado del archivo que contiene los frames clave
 def delete_key_frames(file_name):
-    if not os.path.exists(os.path.join("media/temp_frames", file_name)):
-        print("ERROR: No se pudo abrir el archivo.")
+    if os.path.exists(os.path.join(TEMP_FRAMES_LOCATION, file_name)):                # Localiza el archivo que contiene los frames claves
+        try:
+            os.remove(os.path.join(TEMP_FRAMES_LOCATION, file_name))                 # Ejecuta la orden de borrado del archivo con los frames claves
+            print(f"Frames clave {file_name} eliminado.")                           # Se informa que se ha conseguido borrar el archivo
+            return True
+        except Exception as e:                                                      # Si da fallo en el borrado salta la excepción
+            print(f"Error al eliminar los frames clave {e}")                        # Se informa del fallo
+            return False
+    else:
+        print("ERROR: No se pudo abrir el archivo.")                                # Si no lo localiza, muestra el error
         return False
 
-    try:
-        os.remove(os.path.join("media/temp_frames", file_name))
-        print(f"Frames clave {file_name} eliminado.")
-        return True
-    except Exception as e:
-        print(f"Error al eliminar los frames clave {e}")
-        return False
-
+# Función para ajustar la nitidez: PROBABLEMENTE PARA ELIMINAR
 def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold: int = 0):
     if blur_ksize % 2 == 0:
         raise ValueError("blur_ksize debe ser impar")
@@ -237,48 +232,40 @@ def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold
 
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imagenes.
-def extract_key_frames(video_path, mat, dims):
+def extract_key_frames(video_path):
 
-    # Llamada a la función de apertura del video
-    cap = open_video(video_path)
+    # Variables de la función
+    key_frames = []                                                         # Lista de los frames claves
+    frames_since_motion = 0                                                 # Contador de frames que han pasado sin que haya movimiento
+    motion_detected = False                                                 # Detector de movimiento
+    area_threshold_start = 150000                                           # Valor minimo que debe superarse para considerar que se está realizando un movimiento
+    area_threshold_end = 25000                                              # Valor máximo en el que se considera que hay estabilidad en la imagen
+    stability_frames = 10                                                   # Umbral que debe superarse para considerar que el tablero ya ha estado en estabilidad y la jugada anterior terminó
 
-    # Obteneción del primer frame para tener la referencia y comprobacion de la visualización del video
-    ret, frame_ref = cap.read()
+    coords = get_corners(video_path)                                        # Llamada a la función obtener las esquinas del tablero
+    mat, dims = get_matriz(coords)                                          # Llamada a la función de la matriz de transformación
+    w, h = dims                                                             # Almacena los valores de la variable dims en dos variables
+
+    video = open_video(video_path)                                          # Llamada a la función que abre el video y almacenamiento en la variable
+    ret, frame_ref = video.read()                                           # Obtención del primer frame
+
     if not ret:
-        return {"error": "Video vacío."}
+        return {"error": "Video vacío."}                                    # Si no se pudo leer el frame, notifica del error
 
-    w, h = dims
+    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (w, h))          # Modificación del frame alterando la perspectiva para visualizar solamente el tablero
+    blur_ref = process_image(frame_ref_warped)                              # Llamada a la función de procesamiento de imagen
 
-    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (w, h))
+    fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)     # Algoritmo de substracción de fondo. Detectando los píxeles cambiantes y los estables
 
-    # Llamada a la función de procesamiento de imagen
-    blur_ref = process_image(frame_ref_warped)
+    while video.isOpened():                                                 # Bucle de procesamiento del video
+        ret, frame_curr = video.read()                                      # Extrae el frame actual
+        if not ret:                                                         # Si devuelve falso, el video ha acabado
+            break
 
-    key_frames = [] # Lista de los frames claves (posteriores a haber hecho un movimiento)
-    frames_since_motion = 0 # Contador de frames que han pasado sin que haya movimiento
-    motion_detected = False # Detector de movimiento
-
-    PIXEL_THRESHOLD = 30
-    AREA_THRESHOLD_START = 150000
-    AREA_THRESHOLD_END = 25000
-    ESTABILITY_FRAMES = 10
-
-    fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
-
-    # Bucle de procesamiento del video, lee frames mientras el video este abierto
-    while cap.isOpened():
-        ret, frame_curr = cap.read()
-        if not ret: break  # Final del video
-
-        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (w, h))
-
-        # Procesamiento del frame actual
-        blur_curr = process_image(frame_curr_warped)
-
-        fgmask = fgbg.apply(blur_curr)
-
-        # Diferencia y Umbralización
-        frame_diff = cv2.absdiff(blur_ref, blur_curr)
+        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (w, h))    # Modificación del frame actual alterando la perspectiva para visualizar solamente el tablero
+        blur_curr = process_image(frame_curr_warped)                        # Procesamiento de la imagen del frame actual
+        fgmask = fgbg.apply(blur_curr)                                      # Almacena la máscara de movimiento en la variable
+        frame_diff = cv2.absdiff(blur_ref, blur_curr)                       # Cálculo de la diferencia absoluta entre el frame de referencia y el actual
 
         _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)
 
@@ -290,7 +277,7 @@ def extract_key_frames(video_path, mat, dims):
 
         if motion_detected == False:
 
-            if motion_area > AREA_THRESHOLD_START:
+            if motion_area > area_threshold_start:
                 motion_detected = True
                 frames_since_motion = 0
             elif motion_area < 500:
@@ -300,7 +287,7 @@ def extract_key_frames(video_path, mat, dims):
 
         else:
 
-            if motion_area < AREA_THRESHOLD_END:
+            if motion_area < area_threshold_end:
                 frames_since_motion += 1
             else:
                 frames_since_motion = 0
@@ -309,7 +296,7 @@ def extract_key_frames(video_path, mat, dims):
         print(f"DEBUG: Motion area: {motion_area}")
 
         # 4. Extracción del Frame Clave y Reinicio
-        if motion_detected and frames_since_motion > ESTABILITY_FRAMES:  # 20 frames de estabilidad
+        if motion_detected and frames_since_motion > stability_frames:
             # El frame actual es el frame clave estable
 
             frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)
@@ -325,5 +312,5 @@ def extract_key_frames(video_path, mat, dims):
 
         print("/////////////////////////////////")
 
-    cap.release()
+    video.release()
     return key_frames
