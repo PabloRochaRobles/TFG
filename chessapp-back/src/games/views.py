@@ -10,7 +10,7 @@ import uuid
 from .serializers import VideoUploadSerializer
 from django.conf import settings
 
-from .services import extract_key_frames, save_key_frames
+from .services import extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames
 
 fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
 fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_frames'))
@@ -45,6 +45,7 @@ class VideoUploadView(APIView):
 
 class AnalyzeVideoView(APIView):
 
+    #
     def post(self, request, *args, **kwargs):
         file_name = request.data.get['file_name']
         source_points = request.data.get['source_points']
@@ -73,26 +74,15 @@ class AnalyzeVideoView(APIView):
         except Exception as e:
             return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
 def delete_video_and_frames(request):
-    saved_file_name = request.data.get('file_id')
+    saved_file_name = request.data.get('file_id')                                                                       # Extracción del nombre del video recibido como parametro desde la petición.
 
-    if not saved_file_name:
-        return Response({"error: No se ha proporcionado el ID del video."}, status=status.HTTP_400_BAD_REQUEST)
+    if not saved_file_name:                                                                                             # Si no existe ese video:
+        return Response({"error: No se ha proporcionado el ID del video."}, status=status.HTTP_400_BAD_REQUEST)             # Devuelve error y status 400 BAD REQUEST
+    ok = delete_temporary_videos(saved_file_name)                                                                       # Ejecuta la función de borrado de video
+    if ok:                                                                                                              # Si la ejecución de borrado de video se ha completado:
+        delete_key_frames(os.path.splitext(saved_file_name)[0])                                                             # Borramos los frames claves asociados (si los tuviera creados)
 
-    base_name = os.path.splitext(saved_file_name)[0]
-    key_frame_name = base_name + ".npz"
-
-    results = {}
-
-    try:
-        if fs_video.exists(saved_file_name):
-            fs_video.delete(saved_file_name)
-            results['video'] = f"Video '{saved_file_name}' eliminado."
-        else:
-            results['video'] = f"El video '{saved_file_name}' no existe."
-
-    except Exception as e:
-        results['video'] = f"Error al eliminar el video {e}."
-
-    return Response({"message": "Proceso de eliminación completado.", "details":results}, status=status.HTTP_200_OK)
+    return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)

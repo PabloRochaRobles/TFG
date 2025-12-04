@@ -2,6 +2,8 @@ import os
 import cv2
 import numpy as np
 from django.conf import settings
+from rest_framework.response import Response
+from rest_framework import status
 
 TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 TEMP_FRAMES_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
@@ -13,18 +15,21 @@ VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 
 # Función de borrado de los videos obtenidos del FrontEnd y almacenados.
 def delete_temporary_videos(file_name):
-    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar
-    if os.path.exists(file_path):                                               # Si la ruta hasta el video existe
-        try:
-            os.remove(file_path)                                                # Se elimina el video especificado por la ruta
-            print(f"DEBUG: El video {file_name} ha sido eliminado")             # Se notifica que el video ha sido eliminado
-            return True
-        except Exception as e:                                                  # Si algo falla, salta la excepción
-            print(f"DEBUG: El video no ha podido ser eliminado: {e}")           # Se notifica cual es el fallo
-            return False
-    else:                                                                       # Si la ruta hasta el archivo no existe
-        print(f"DEBUG: El video {file_name} no existe")                         # Se notifica de que ese archivo no existe
-        return True
+    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar                                            # Si la ruta hasta el video existe
+    try:
+        if os.path.exists(file_path):                                           # Si el archivo existe:
+            os.remove(file_path)                                                    # Se elimina el video especificado por la ruta
+            print(f"El video {file_name} ha sido eliminado")                        # Se notifica que el video ha sido eliminado
+            return True                                                             # Devuelve verdadero
+
+        else:                                                                   # Si no existe:
+            return Response({"error: No se ha encontrado el video"},
+                            status=status.HTTP_400_BAD_REQUEST)                     # Se notifica del fallo y devuelve 400 BAD REQUEST
+
+    except Exception as e:                                                      # Si algo falla, salta la excepción
+        return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)                   # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
+
 
 # Función de apertura del video de ajedrez
 def open_video(video_path):
@@ -164,17 +169,20 @@ def show_key_frames(key_frames):
 
 # Función para el borrado del archivo que contiene los frames clave
 def delete_key_frames(file_name):
-    if os.path.exists(os.path.join(TEMP_FRAMES_LOCATION, file_name)):                # Localiza el archivo que contiene los frames claves
-        try:
-            os.remove(os.path.join(TEMP_FRAMES_LOCATION, file_name))                 # Ejecuta la orden de borrado del archivo con los frames claves
-            print(f"Frames clave {file_name} eliminado.")                           # Se informa que se ha conseguido borrar el archivo
+    path_frames = os.path.join(os.path.join(TEMP_FRAMES_LOCATION, file_name), '.npz')                           # Se crea una variable que almacena toda la ruta hasta el fichero que contiene los frames claves
+    try:
+        if os.path.exists(path_frames):                                                                         # Si existe el archivo:
+            os.remove(os.path.join(TEMP_FRAMES_LOCATION, file_name))                                                # Ejecuta la orden de borrado del archivo con los frames claves
+            print(f"Frames clave {file_name} eliminado.")                                                           # Se informa que se ha conseguido borrar el archivo
             return True
-        except Exception as e:                                                      # Si da fallo en el borrado salta la excepción
-            print(f"Error al eliminar los frames clave {e}")                        # Se informa del fallo
+        else:                                                                                                   # Si no localiza el archivo:
+            print("No se ha analizado la partida")                                                                  # Significa que no se ha procedido al análisis de la partida
             return False
-    else:
-        print("ERROR: No se pudo abrir el archivo.")                                # Si no lo localiza, muestra el error
-        return False
+
+    except Exception as e:                                                                                      # Si da fallo en el borrado salta la excepción
+        return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)                                               # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
+
 
 # Función para ajustar la nitidez: PROBABLEMENTE PARA ELIMINAR
 def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold: int = 0):
