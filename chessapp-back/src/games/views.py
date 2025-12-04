@@ -10,7 +10,7 @@ import uuid
 from .serializers import VideoUploadSerializer
 from django.conf import settings
 
-from .services import extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames
+from .services import extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames, get_corners
 
 fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
 fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_frames'))
@@ -18,7 +18,8 @@ fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_fr
 class VideoUploadView(APIView):
 
     # POST: Recepción de un video desde el frontend, validación y almacenamiento en el backend
-    def post(self, request):
+    @staticmethod
+    def post(request):
 
         MAX_FILE_SIZE = 250 * 1024 * 1024                                                   # Tamaño máximo de video: 250MB
 
@@ -45,34 +46,35 @@ class VideoUploadView(APIView):
 
 class AnalyzeVideoView(APIView):
 
-    #
-    def post(self, request, *args, **kwargs):
-        file_name = request.data.get['file_name']
-        source_points = request.data.get['source_points']
+    #POST: Ánalisis de un video de ajedrez
+    @staticmethod
+    def post(request, *args, **kwargs):
+        file_name = request.data.get['file_name']                           # Extracción del nombre del fichero de la petición
+        video_path = fs_video.path(file_name)                               # Extracción de la ruta hasta el video
+        source_points = get_corners(video_path)                             # Llamada a la función que extrae las esquinas del tablero de ajedrez
 
-        if not file_name or not source_points:
-            return Response({"error: No se han proporcionado el nombre o las coordenadas"}, status=status.HTTP_400_BAD_REQUEST)
+        if not file_name or not source_points:                              # Si no se recibe el nombre del fichero o no se reciben las cuatro esquinas del tablero
+            return Response({"error: No se han proporcionado el nombre o las coordenadas"}, status=status.HTTP_400_BAD_REQUEST) # Se devuelve el mensaje y status 400
 
-        video_path = fs_video.path(file_name)
-        if not os.path.exists(video_path):
-            return Response({"error: No se ha encontrado el video"}, status=status.HTTP_400_BAD_REQUEST)
+        if not os.path.exists(video_path):                                  # Si la ruta hasta el fichero resulta que no lleva a ningun archivo:
+            return Response({"error: No se ha encontrado el video"}, status=status.HTTP_400_BAD_REQUEST)    # Devuelve el mensaje de error y status 400
 
         try:
-            key_frames = extract_key_frames(video_path)
+            key_frames = extract_key_frames(video_path)                     # Extracción de los frames claves
 
-            if isinstance(key_frames, dict) and key_frames.get('error'):
-                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de los frames claves
+                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Devuelve error y status 500
 
-            video_name = os.path.splitext(file_name)[0]
-            saved_frames = save_key_frames(key_frames, video_name)
+            video_name = os.path.splitext(file_name)[0]                     # Extracción del nombre del video sin la extensión
+            saved_frames = save_key_frames(key_frames, video_name)          # Guardado de los frames claves
 
-            if not saved_frames:
-                return Response({'error': f"Fallo interno durante el guardado de los frames"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            if not saved_frames:                                            # Comprobación de los frames claves
+                return Response({'error': f"Fallo interno durante el guardado de los frames"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    # Devuelve error y status 500
 
-            return Response({"message": "Analisis de frames completado", "total_frames": len(saved_frames), "analisis_id": video_name}, status=status.HTTP_200_OK)
+            return Response({"message": "Analisis de frames completado", "total_frames": len(saved_frames), "analisis_id": video_name}, status=status.HTTP_200_OK)  # Si todo termina bien, devuelve mensaje de éxito y status 200
 
-        except Exception as e:
-            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:    # Si salta la excepción
+            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Notifica del fallo y status 500
 
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
@@ -85,4 +87,4 @@ def delete_video_and_frames(request):
     if ok:                                                                                                              # Si la ejecución de borrado de video se ha completado:
         delete_key_frames(os.path.splitext(saved_file_name)[0])                                                             # Borramos los frames claves asociados (si los tuviera creados)
 
-    return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)
+    return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200
