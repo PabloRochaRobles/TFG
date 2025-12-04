@@ -1,3 +1,5 @@
+import json
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -8,7 +10,10 @@ import uuid
 from .serializers import VideoUploadSerializer
 from django.conf import settings
 
-fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
+from .services import extract_key_frames, save_key_frames
+
+fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
+fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_frames'))
 
 class VideoUploadView(APIView):
 
@@ -27,13 +32,67 @@ class VideoUploadView(APIView):
             return Response({'error': 'El video insertado excede el tamaño permitido.'}, status=status.HTTP_400_BAD_REQUEST)    # Devuelve 400 BAD REQUEST
 
         try:
-            # Creación de un nombnre único.
+            # Creación de un nombre único.
             file_extension = os.path.splitext(video_file.name)[1]                           # Extracción de la extensión del archivo
             unique_file_name = str(uuid.uuid4()) + file_extension                           # Creación de un nombre con un identificador único
-            saved_file_name = fs.save(unique_file_name, video_file)                         # Se guarda el archivo
+            saved_file_name = fs_video.save(unique_file_name, video_file)                         # Se guarda el archivo
             partida_id = str(uuid.uuid4())                                                  # Generación de un ID único para la partida
 
             return Response({'file': saved_file_name, 'id': partida_id, 'message': "Video subido con éxito."}, status=status.HTTP_201_CREATED)  # Se notifica del nombre del archivo, el ID de la partida, mensaje de que el video se ha subido y status 201 CREATED
 
         except Exception as e:                                                              # En caso de fallo, salta la excepción
-            return Response({'error': "Fallo del servidor durante el almacenamiento."}, status=status.HTTP_400_BAD_REQUEST)     # Se notifica del fallo y devuelve 400 BAD REQUEST
+            return Response({'error': "Fallo del servidor durante el almacenamiento."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)     # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
+
+class AnalyzeVideoView(APIView):
+
+    def post(self, request, *args, **kwargs):
+        file_name = request.data.get['file_name']
+        source_points = request.data.get['source_points']
+
+        if not file_name or not source_points:
+            return Response({"error: No se han proporcionado el nombre o las coordenadas"}, status=status.HTTP_400_BAD_REQUEST)
+
+        video_path = fs_video.path(file_name)
+        if not os.path.exists(video_path):
+            return Response({"error: No se ha encontrado el video"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            key_frames = extract_key_frames(video_path)
+
+            if isinstance(key_frames, dict) and key_frames.get('error'):
+                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            video_name = os.path.splitext(file_name)[0]
+            saved_frames = save_key_frames(key_frames, video_name)
+
+            if not saved_frames:
+                return Response({'error': f"Fallo interno durante el guardado de los frames"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            return Response({"message": "Analisis de frames completado", "total_frames": len(saved_frames), "analisis_id": video_name}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+def delete_video_and_frames(request):
+    saved_file_name = request.data.get('file_id')
+
+    if not saved_file_name:
+        return Response({"error: No se ha proporcionado el ID del video."}, status=status.HTTP_400_BAD_REQUEST)
+
+    base_name = os.path.splitext(saved_file_name)[0]
+    key_frame_name = base_name + ".npz"
+
+    results = {}
+
+    try:
+        if fs_video.exists(saved_file_name):
+            fs_video.delete(saved_file_name)
+            results['video'] = f"Video '{saved_file_name}' eliminado."
+        else:
+            results['video'] = f"El video '{saved_file_name}' no existe."
+
+    except Exception as e:
+        results['video'] = f"Error al eliminar el video {e}."
+
+    return Response({"message": "Proceso de eliminación completado.", "details":results}, status=status.HTTP_200_OK)
