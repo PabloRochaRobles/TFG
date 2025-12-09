@@ -1,5 +1,7 @@
 import json
+from http.client import responses
 
+from django.http import FileResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -21,7 +23,7 @@ class VideoUploadView(APIView):
     @staticmethod
     def post(request):
 
-        MAX_FILE_SIZE = 250 * 1024 * 1024                                                   # Tamaño máximo de video: 250MB
+        MAX_FILE_SIZE = 250 * 1024 * 1024                                                 # Tamaño máximo de video: 250MB
 
         serializer = VideoUploadSerializer(data=request.data)                               # Preparación de los datos para la validación
         if not serializer.is_valid():                                                       # Si no son validos:
@@ -60,7 +62,7 @@ class AnalyzeVideoView(APIView):
             return Response({"error: No se ha encontrado el video"}, status=status.HTTP_400_BAD_REQUEST)    # Devuelve el mensaje de error y status 400
 
         try:
-            key_frames = extract_key_frames(video_path)                     # Extracción de los frames claves
+            key_frames = extract_key_frames(video_path, source_points)                     # Extracción de los frames claves
 
             if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de los frames claves
                 return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Devuelve error y status 500
@@ -75,6 +77,25 @@ class AnalyzeVideoView(APIView):
 
         except Exception as e:    # Si salta la excepción
             return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Notifica del fallo y status 500
+
+class VideoStreamView(APIView):
+
+    def get(self, request, *args, **kwargs):
+
+        video_path = request.data.get['video_path']
+
+        if not os.path.exists(video_path):
+            return Response({"error: No se ha encontrado la ruta hasta el video"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not os.path.isfile(video_path):
+            return Response({"error: No es un archivo valido"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            response = FileResponse(open(video_path, 'rb'), content_type='video/mp4')
+            return response
+
+        except Exception as e:
+            return Response({'error': f"Fallo en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])

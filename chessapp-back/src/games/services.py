@@ -216,7 +216,7 @@ def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold
     return sharpened_image
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imágenes.
-def extract_key_frames(video_path):
+def extract_key_frames(video_path, coords):
 
     # Variables de la función
     key_frames = []                                                         # Lista de los frames claves
@@ -226,7 +226,6 @@ def extract_key_frames(video_path):
     area_threshold_end = 25000                                              # Valor máximo en el que se considera que hay estabilidad en la imagen
     stability_frames = 10                                                   # Umbral que debe superarse para considerar que el tablero ya ha estado en estabilidad y la jugada anterior terminó
 
-    coords = get_corners(video_path)                                        # Llamada a la función obtener las esquinas del tablero
     mat = get_matriz(coords)                                                # Llamada a la función de la matriz de transformación                                                            # Almacena los valores de la variable dims en dos variables
 
     video = open_video(video_path)                                          # Llamada a la función que abre el video y almacenamiento en la variable
