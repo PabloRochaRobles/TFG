@@ -1,0 +1,35 @@
+
+# 1. Subida de un video al backend:
+http --form  POST http://127.0.0.1:8000/api/partidas/upload/ video_file@"C://Users/Admin/Videos/Ajedrez/test1.mp4"
+
+# Resultado:
+    "file": "0ab5789c-97c4-4c41-837b-ab4210999b64.mp4",
+    "id": "c18b727b-c8c5-4893-9f40-b6edd851f304",
+    "message": "Video subido con éxito."
+
+# 2. Borrado del video recien subido (no se habia generado frames clave):
+http DELETE http://localhost:8000/api/partidas/delete/ video_file="a4cef790-aeb3-4dda-9a6a-297bd88b7329.mp4"
+
+# Resultado:
+HTTP/1.1 200 OK
+Allow: OPTIONS, DELETE
+Content-Length: 49
+Content-Type: application/json
+Cross-Origin-Opener-Policy: same-origin
+Date: Tue, 09 Dec 2025 18:23:34 GMT
+Referrer-Policy: same-origin
+Server: WSGIServer/0.2 CPython/3.11.9
+Vary: Accept, Cookie
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+
+{
+    "message": "Proceso de eliminación completado."
+}
+
+# 3. Visualización de un video almacenado en el backend (desde el navegador):
+http://127.0.0.1:8000/api/partidas/stream/0ab5789c-97c4-4c41-837b-ab4210999b64.mp4/
+
+# Resultado:
+Se muestra el video completo de la partida guardada.
+

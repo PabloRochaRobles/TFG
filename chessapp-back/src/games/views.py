@@ -5,6 +5,7 @@ from django.http import FileResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.decorators import api_view
 from django.core.files.storage import FileSystemStorage
 import os
 import uuid
@@ -51,7 +52,7 @@ class AnalyzeVideoView(APIView):
     #POST: Ánalisis de un video de ajedrez
     @staticmethod
     def post(request, *args, **kwargs):
-        file_name = request.data.get['file_name']                           # Extracción del nombre del fichero de la petición
+        file_name = request.data.get['video_file']                          # Extracción del nombre del fichero de la petición
         video_path = fs_video.path(file_name)                               # Extracción de la ruta hasta el video
         source_points = get_corners(video_path)                             # Llamada a la función que extrae las esquinas del tablero de ajedrez
 
@@ -80,9 +81,9 @@ class AnalyzeVideoView(APIView):
 
 class VideoStreamView(APIView):
 
-    def get(self, request, *args, **kwargs):
+    def get(self, request, file_name, *args, **kwargs):
 
-        video_path = request.data.get['video_path']
+        video_path = fs_video.path(file_name)
 
         if not os.path.exists(video_path):
             return Response({"error: No se ha encontrado la ruta hasta el video"}, status=status.HTTP_404_NOT_FOUND)
@@ -100,11 +101,12 @@ class VideoStreamView(APIView):
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
 def delete_video_and_frames(request):
-    saved_file_name = request.data.get('file_id')                                                                       # Extracción del nombre del video recibido como parametro desde la petición.
+    saved_file_name = request.data.get('video_file')                                                                       # Extracción del nombre del video recibido como parametro desde la petición.
 
     if not saved_file_name:                                                                                             # Si no existe ese video:
-        return Response({"error: No se ha proporcionado el ID del video."}, status=status.HTTP_400_BAD_REQUEST)             # Devuelve error y status 400 BAD REQUEST
+        return Response({"error: No se ha proporcionado el nombre del video."}, status=status.HTTP_400_BAD_REQUEST)             # Devuelve error y status 400 BAD REQUEST
     ok = delete_temporary_videos(saved_file_name)                                                                       # Ejecuta la función de borrado de video
+
     if ok:                                                                                                              # Si la ejecución de borrado de video se ha completado:
         delete_key_frames(os.path.splitext(saved_file_name)[0])                                                             # Borramos los frames claves asociados (si los tuviera creados)
 
