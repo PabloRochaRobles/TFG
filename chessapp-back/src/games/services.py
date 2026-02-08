@@ -1,5 +1,7 @@
 import os
 import cv2
+import chess
+import chess.engine
 import numpy as np
 from django.conf import settings
 from rest_framework.response import Response
@@ -183,38 +185,6 @@ def delete_key_frames(file_name):
         return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)                                               # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
 
-
-# Función para ajustar la nitidez: PROBABLEMENTE PARA ELIMINAR
-def increase_sharpness(frame, blur_ksize: int = 25, weight: float = 6, threshold: int = 0):
-    if blur_ksize % 2 == 0:
-        raise ValueError("blur_ksize debe ser impar")
-
-    is_color = len(frame.shape) == 3
-    gray_image = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if is_color else frame.copy()
-
-    blurred = cv2.GaussianBlur(gray_image, (blur_ksize, blur_ksize), 0)
-
-    # 2. Calcular la máscara de detalles (diferencia entre original y desenfocada)
-    # Convertimos a float para evitar problemas de saturación con valores negativos
-    detail_mask = cv2.subtract(gray_image.astype(np.float32), blurred.astype(np.float32))
-
-    # 3. Aplicar umbral a la máscara de detalles (opcional para reducir ruido)
-    if threshold > 0:
-        detail_mask = np.where(np.abs(detail_mask) < threshold, 0, detail_mask)
-
-    # 4. Sumar la máscara de detalles (amplificada) a la imagen original
-    # Convertimos de nuevo a tipo de imagen para la suma
-    sharpened_image = cv2.addWeighted(gray_image.astype(np.float32), 1.0, detail_mask, weight, 0)
-
-    # Asegurarse de que los valores estén en el rango [0, 255] y convertir a uint8
-    sharpened_image = np.clip(sharpened_image, 0, 255).astype(np.uint8)
-
-    # Si la imagen original era a color, convertimos de nuevo a color
-    if is_color:
-        sharpened_image = cv2.cvtColor(sharpened_image, cv2.COLOR_GRAY2BGR)
-
-    return sharpened_image
-
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imágenes.
 def extract_key_frames(video_path, coords):
 
@@ -279,11 +249,70 @@ def extract_key_frames(video_path, coords):
             motion_detected = False                                         # Se cambia la variable de movimiento detectado a falso
             frames_since_motion = 0                                         # Se reestablece la cuenta de frames desde un movimiento
 
-            cv2.imshow(f"DEBUG: Diferencia de Frames Normal", cv2.rotate(frame_curr_warped, cv2.ROTATE_180))
-            cv2.waitKey(0)
+            #cv2.imshow(f"DEBUG: Diferencia de Frames Normal", cv2.rotate(frame_curr_warped, cv2.ROTATE_180))
+            #cv2.waitKey(0)
             print(f"DEBUG: Frame Guardado!")
 
         print("/////////////////////////////////")
 
     video.release()                                                         # Cierra del video
     return key_frames                                                       # Devuelve la lista con todos los frames claves
+
+def analysis_best_pos(fen):
+    path_engine = "C:/Users/Admin/Videos/Ajedrez/stockfish/stockfish-windows-x86-64-avx2.exe"
+
+    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+
+        board = chess.Board(fen)
+
+        analysis = engine.analyse(board, chess.engine.Limit(time=1), multipv=3)
+
+        top_moves = []
+
+        for entry in analysis:
+            move = entry["pv"][0]
+            score = entry["score"].relative.score(mate_score=10000)
+
+            top_moves.append({"move_san": board.san(move),
+                              "move_uci": move.uci(),
+                              "score": score / 100.0 if score is not None else "Mate"})
+
+        return top_moves
+
+def analysis_best_posStockfish(fen):
+    path_engine = "C:/Users/Admin/Videos/Ajedrez/stockfish/stockfish-windows-x86-64-avx2.exe"
+
+    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+
+        board = chess.Board(fen)
+
+        info = engine.analyse(board, chess.engine.Limit(time=1))
+
+        pv_moves = info["pv"]
+        linea_seg = []
+        temp_board = board.copy()
+        depth = 10
+
+        for i, move in enumerate(pv_moves[:depth]):
+            san_move = temp_board.san(move)
+            linea_seg.append({"move_san": san_move,})
+            temp_board.push(move)
+
+        return {
+            "puntuacion": info["score"].relative.score(mate_score=10000) / 100.0,
+            "secuencia": linea_seg
+        }
+
+def analysis_best_posObsidian(fen):
+    path_engine = "C:/Users/Admin/Videos/Ajedrez/Obsidian160-avx2-pext.exe"
+
+    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+
+        board = chess.Board(fen)
+
+        info = engine.analyse(board, chess.engine.Limit(time=1))
+
+        return {
+            "puntuacion": info["score"].relative.score(mate_score=10000) / 100.0,
+            "secuencia": [board.san(m) for m in info["pv"][:10]],
+        }
