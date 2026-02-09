@@ -1,4 +1,6 @@
 import os
+from string import punctuation
+
 import cv2
 import chess
 import chess.engine
@@ -288,19 +290,15 @@ def analysis_best_posStockfish(fen):
 
         info = engine.analyse(board, chess.engine.Limit(time=1))
 
-        pv_moves = info["pv"]
-        linea_seg = []
-        temp_board = board.copy()
-        depth = 10
+        best_move = info["pv"][0]
 
-        for i, move in enumerate(pv_moves[:depth]):
-            san_move = temp_board.san(move)
-            linea_seg.append({"move_san": san_move,})
-            temp_board.push(move)
+        board.push(best_move)
 
         return {
-            "puntuacion": info["score"].relative.score(mate_score=10000) / 100.0,
-            "secuencia": linea_seg
+            "movement_uci": best_move.uci(),
+            "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
+            "new_fen": board.fen(),
+            "score": info["score"].relative.score(mate_score=10000)
         }
 
 def analysis_best_posObsidian(fen):
@@ -316,3 +314,42 @@ def analysis_best_posObsidian(fen):
             "puntuacion": info["score"].relative.score(mate_score=10000) / 100.0,
             "secuencia": [board.san(m) for m in info["pv"][:10]],
         }
+
+def analysis_best_posPlentyChess(fen):
+    path_engine = "C:/Users/Admin/Videos/Ajedrez/PlentyChess-7.0.0-windows-avx2.exe"
+
+    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+
+        board = chess.Board(fen)
+        info = engine.analyse(board, chess.engine.Limit(time=1), multipv=10)
+        resultado = []
+
+        for i, variante in enumerate(info):
+            mov = variante['pv'][0]
+            score = variante['score'].relative
+
+            if score.is_mate():
+                eval_cp = 10000 if score.mate() > 0 else -10000
+            else:
+                eval_cp = score.score()
+
+            resultado.append((mov.uci(), eval_cp))
+
+    return resultado
+
+def make_move(fen, mov):
+    try:
+
+        board = chess.Board(fen)
+
+        movement = chess.Move.from_uci(mov)
+
+        if movement not in board.legal_moves:
+            raise ValueError(f"Movimiento {mov} no es legal")
+
+        board.push(movement)
+
+        return board.fen()
+
+    except ValueError as e:
+        raise ValueError(f"Error al procesar:  {e}")
