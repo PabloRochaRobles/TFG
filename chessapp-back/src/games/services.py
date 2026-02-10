@@ -1,4 +1,5 @@
 import os
+from collections import Counter
 from string import punctuation
 
 import cv2
@@ -288,7 +289,7 @@ def analysis_best_posStockfish(fen):
 
         board = chess.Board(fen)
 
-        info = engine.analyse(board, chess.engine.Limit(time=1))
+        info = engine.analyse(board, chess.engine.Limit(time=0.5))
 
         best_move = info["pv"][0]
 
@@ -298,7 +299,7 @@ def analysis_best_posStockfish(fen):
             "movement_uci": best_move.uci(),
             "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
             "new_fen": board.fen(),
-            "score": info["score"].relative.score(mate_score=10000)
+            "score": info["score"].relative.score(mate_score=10000) / 100
         }
 
 def analysis_best_posObsidian(fen):
@@ -308,11 +309,17 @@ def analysis_best_posObsidian(fen):
 
         board = chess.Board(fen)
 
-        info = engine.analyse(board, chess.engine.Limit(time=1))
+        info = engine.analyse(board, chess.engine.Limit(time=0.5))
+
+        best_move = info["pv"][0]
+
+        board.push(best_move)
 
         return {
-            "puntuacion": info["score"].relative.score(mate_score=10000) / 100.0,
-            "secuencia": [board.san(m) for m in info["pv"][:10]],
+            "movement_uci": best_move.uci(),
+            "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
+            "new_fen": board.fen(),
+            "score": info["score"].relative.score(mate_score=10000) / 100
         }
 
 def analysis_best_posPlentyChess(fen):
@@ -321,21 +328,40 @@ def analysis_best_posPlentyChess(fen):
     with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
 
         board = chess.Board(fen)
-        info = engine.analyse(board, chess.engine.Limit(time=1), multipv=10)
-        resultado = []
 
-        for i, variante in enumerate(info):
-            mov = variante['pv'][0]
-            score = variante['score'].relative
+        info = engine.analyse(board, chess.engine.Limit(time=0.5))
 
-            if score.is_mate():
-                eval_cp = 10000 if score.mate() > 0 else -10000
-            else:
-                eval_cp = score.score()
+        best_move = info["pv"][0]
 
-            resultado.append((mov.uci(), eval_cp))
+        board.push(best_move)
 
-    return resultado
+        return {
+            "movement_uci": best_move.uci(),
+            "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
+            "new_fen": board.fen(),
+            "score": info["score"].relative.score(mate_score=10000) / 100
+        }
+
+def consensus_analysis(stock, obsidian, plenty, fen):
+    moves = []
+
+    board = chess.Board(fen)
+    moves.append(stock["movement_uci"])
+    moves.append(obsidian["movement_uci"])
+    moves.append(plenty["movement_uci"])
+
+    count = Counter(moves)
+
+    most_common = count.most_common(1)[0][0]
+
+    move = chess.Move.from_uci(most_common)
+    board.push(move)
+
+    return {
+        "movement_uci": move,
+        "new_fen": board.fen(),
+    }
+
 
 def make_move(fen, mov):
     try:
