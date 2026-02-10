@@ -18,6 +18,10 @@ PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 
+# -----------------------------------------
+# Funciones de Manejo de Video
+# -----------------------------------------
+
 # Función de borrado de los videos obtenidos del FrontEnd y almacenados.
 def delete_temporary_videos(file_name):
     file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar                                            # Si la ruta hasta el video existe
@@ -34,7 +38,6 @@ def delete_temporary_videos(file_name):
     except Exception as e:                                                      # Si algo falla, salta la excepción
         return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)                   # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
-
 
 # Función de apertura del video de ajedrez
 def open_video(video_path):
@@ -261,26 +264,9 @@ def extract_key_frames(video_path, coords):
     video.release()                                                         # Cierra del video
     return key_frames                                                       # Devuelve la lista con todos los frames claves
 
-def analysis_best_pos(fen):
-    path_engine = "C:/Users/Admin/Videos/Ajedrez/stockfish/stockfish-windows-x86-64-avx2.exe"
-
-    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
-
-        board = chess.Board(fen)
-
-        analysis = engine.analyse(board, chess.engine.Limit(time=1), multipv=3)
-
-        top_moves = []
-
-        for entry in analysis:
-            move = entry["pv"][0]
-            score = entry["score"].relative.score(mate_score=10000)
-
-            top_moves.append({"move_san": board.san(move),
-                              "move_uci": move.uci(),
-                              "score": score / 100.0 if score is not None else "Mate"})
-
-        return top_moves
+# -----------------------------------------
+# Funciones de Análisis de Partida
+# -----------------------------------------
 
 def analysis_best_posStockfish(fen):
     path_engine = "C:/Users/Admin/Videos/Ajedrez/stockfish/stockfish-windows-x86-64-avx2.exe"
@@ -289,11 +275,9 @@ def analysis_best_posStockfish(fen):
 
         board = chess.Board(fen)
 
-        info = engine.analyse(board, chess.engine.Limit(time=0.5))
+        info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
         best_move = info["pv"][0]
-
-        board.push(best_move)
 
         return {
             "movement_uci": best_move.uci(),
@@ -309,11 +293,9 @@ def analysis_best_posObsidian(fen):
 
         board = chess.Board(fen)
 
-        info = engine.analyse(board, chess.engine.Limit(time=0.5))
+        info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
         best_move = info["pv"][0]
-
-        board.push(best_move)
 
         return {
             "movement_uci": best_move.uci(),
@@ -329,11 +311,9 @@ def analysis_best_posPlentyChess(fen):
 
         board = chess.Board(fen)
 
-        info = engine.analyse(board, chess.engine.Limit(time=0.5))
+        info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
         best_move = info["pv"][0]
-
-        board.push(best_move)
 
         return {
             "movement_uci": best_move.uci(),
@@ -343,39 +323,40 @@ def analysis_best_posPlentyChess(fen):
         }
 
 def consensus_analysis(stock, obsidian, plenty, fen):
-    moves = []
 
     board = chess.Board(fen)
-    moves.append(stock["movement_uci"])
-    moves.append(obsidian["movement_uci"])
-    moves.append(plenty["movement_uci"])
+    moves = [
+        stock["movement_uci"],
+        obsidian["movement_uci"],
+        plenty["movement_uci"]
+    ]
 
     count = Counter(moves)
 
-    most_common = count.most_common(1)[0][0]
+    most_common_uci = count.most_common(1)[0][0]
 
-    move = chess.Move.from_uci(most_common)
-    board.push(move)
-
-    return {
-        "movement_uci": move,
-        "new_fen": board.fen(),
-    }
-
-
-def make_move(fen, mov):
     try:
-
-        board = chess.Board(fen)
-
-        movement = chess.Move.from_uci(mov)
-
-        if movement not in board.legal_moves:
-            raise ValueError(f"Movimiento {mov} no es legal")
-
-        board.push(movement)
-
-        return board.fen()
+        move = chess.Move.from_uci(most_common_uci)
 
     except ValueError as e:
-        raise ValueError(f"Error al procesar:  {e}")
+        raise ValueError(f"Movimiento invalido: {moves}. Error: {e}")
+
+    if move not in board.legal_moves:
+        print(f"\n ERROR: El movimiento {most_common_uci} NO es legal en esta posición")
+        print(f"Posición: {board.board_fen()}")
+        print(f"\nMovimientos legales disponibles:")
+        for legal_move in list(board.legal_moves)[:10]:  # Mostrar primeros 10
+            print(f"  - {legal_move.uci()} ({board.san(legal_move)})")
+
+        raise ValueError(
+            f"El movimiento {most_common_uci} no es legal en la posición {fen}. "
+            f"Los motores probablemente analizaron una posición diferente."
+        )
+
+    move_san = board.san(move)
+    board.push(move)
+    return {
+        "movement_uci": most_common_uci,
+        "movement_san": move_san,
+        "new_fen": board.fen(),
+    }

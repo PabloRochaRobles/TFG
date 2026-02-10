@@ -16,18 +16,22 @@ from src.games.services import extract_key_frames, save_key_frames, load_key_fra
     analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis
 from src.games.services import get_corners
 from src.games.services import get_matriz
-from src.games.services import analysis_best_pos, analysis_best_posStockfish, analysis_best_posObsidian, make_move, consensus_analysis
+from src.games.services import analysis_best_posStockfish, analysis_best_posObsidian, consensus_analysis
 
 def visualize_key_frames(video_path):
 
     fen = "3r2k1/7p/6pB/5p2/p6P/NbRP1P2/6PK/8 b - - 4 33"
 
-    for i in range(1, 11):
+    for i in range(1, 4):
+        print(f"\n{'=' * 60}")
+        print(f"JUGADA #{i}")
+        print(f"{'=' * 60}")
+        print(f"FEN actual: {fen}\n")
 
         print("---- StockFish -----")
         ini = analysis_best_posStockfish(fen)
         print("Movimientos: " + ini["movement_uci"] + "/" + ini["movement_san"])
-        print("Score" + str(ini["score"]))
+        print("Score: " + str(ini["score"]))
 
         print("----- Obsidian -----")
         ini2 = analysis_best_posObsidian(fen)
@@ -35,37 +39,17 @@ def visualize_key_frames(video_path):
         print("Score: " + str(ini2["score"]))
 
         print("----- PlentyChess -----")
-        ini3 = analysis_best_posObsidian(fen)
+        ini3 = analysis_best_posPlentyChess(fen)
         print("Movimientos: " + ini3["movement_uci"] + "/" + ini3["movement_san"])
         print("Score: " + str(ini3["score"]))
 
+        print("\n----- CONSENSO -----")
         consensus = consensus_analysis(ini, ini2, ini3, fen)
-        print(consensus["movement_uci"])
-        print(consensus["new_fen"])
+        print(f"Movimiento consensuado: {consensus['movement_san']} ({consensus['movement_uci']})")
+        print(f"Nuevo FEN: {consensus['new_fen']}")
 
+        # Actualizar FEN para la siguiente iteración
         fen = consensus["new_fen"]
-
-        consensus_analysis(ini, ini2, ini3, fen)
-
-    #print(make_move(fen, "g1h2"))
-
-
-    #res = analysis_best_posStockfish("2r3k1/1b5p/5RpB/1N3p2/p7/3P3P/5PP1/6K1 w - - 0 28")
-
-    #print(f"---- Analysis Best Pos Stockfish ----")
-    #score = res["puntuacion"]
-    #score_str = f"{score:.2f}" if isinstance(score, float) else str(score)
-    #print(f"Evaluacion: {score_str}")
-
-    #print("---- Secuencia Sugerida ----")
-    #for i, jugada in enumerate(res["secuencia"], 1):
-    #    print(f" Paso [{i}]: {jugada}")
-
-    #mejores_movimientos = analysis_best_posPlentyChess("2r3k1/1b5p/5RpB/1N3p2/p7/3P3P/5PP1/6K1 w - - 0 28")
-
-    #print("\n=== MEJORES MOVIMIENTOS PARA BLANCAS ===")
-    #for i, (mov, eval) in enumerate(mejores_movimientos, 1):
-    #    print(f"{i}. {mov} (Evaluación: {eval / 100:.2f})")
 
     # delete_key_frames("test2.npz")
 
