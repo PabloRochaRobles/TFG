@@ -38,6 +38,13 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+
+      [
+      "expo-camera",
+        {
+          "recordAudioPermission": "Allow ---- to record audio for video analysis"
+        }
       ]
     ],
     "experiments": {
