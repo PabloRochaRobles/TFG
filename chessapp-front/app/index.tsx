@@ -34,7 +34,7 @@ export default function HomeScreen() {
           <Text style={styles.buttonText}>Grabar vídeo</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.mainButton, styles.accentButton]} onPress={() => router.push('/explore')}>
+        <TouchableOpacity style={[styles.mainButton, styles.accentButton]} onPress={() => router.push('/library')}>
           <Text style={styles.buttonText}>Ver librería</Text>
         </TouchableOpacity>
       </View>
