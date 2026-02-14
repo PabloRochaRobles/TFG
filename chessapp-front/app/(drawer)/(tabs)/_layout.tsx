@@ -10,18 +10,18 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#3b82f6',
-        tabBarInactiveTintColor: 'gray',
+        tabBarInactiveTintColor: 'rgba(122, 122, 122, 0.5)',
         tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: '#fff',
           borderTopWidth: 1,
-          borderTopColor: '#e5e7eb',
-          height: 60 + insets.bottom, // Altura dinámica según el dispositivo
-          paddingBottom: insets.bottom, // Padding inferior dinámico
+          borderTopColor: '#000',
+          height: 60 + insets.bottom,
+          paddingBottom: insets.bottom,
           paddingTop: 8,
         },
         tabBarIconStyle: {
-          marginTop: 0, // Ajusta la posición del ícono para que quede centrado
+          marginTop: 0,
         },
       }}
     >
@@ -29,8 +29,8 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Inicio',
-          tabBarIcon: ({ color, size }) => (
-            <FontAwesome name="home" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="home" size={32} color={color} />
           ),
         }}
       />
@@ -39,8 +39,8 @@ export default function TabLayout() {
         name="upload"
         options={{
           title: 'Subir',
-          tabBarIcon: ({ color, size }) => (
-            <FontAwesome name="upload" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="upload" size={32} color={color} />
           ),
         }}
       />
@@ -49,18 +49,19 @@ export default function TabLayout() {
         name="camera"
         options={{
           title: 'Cámara',
-          tabBarIcon: ({ color, size }) => (
-            <FontAwesome name="camera" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="camera" size={32} color={color} />
           ),
         }}
       />
+
 
       <Tabs.Screen
         name="library"
         options={{
           title: 'Librería',
-          tabBarIcon: ({ color, size }) => (
-            <FontAwesome name="bookmark" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="bookmark" size={32} color={color} />
           ),
         }}
       />
@@ -69,8 +70,8 @@ export default function TabLayout() {
         name="user"
         options={{
           title: 'Usuario',
-          tabBarIcon: ({ color, size }) => (
-            <FontAwesome name="user" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="user" size={32} color={color} />
           ),
         }}
       />

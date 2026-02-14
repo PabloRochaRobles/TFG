@@ -1,6 +1,7 @@
-import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { DrawerActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -8,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function LibraryScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const videoCount = 0; // Simulamos que no hay vídeos para mostrar la vista de la imagen
 
   return (
@@ -16,7 +18,10 @@ export default function LibraryScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         {/* Header Azul Principal */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.menuButton}>
+          <TouchableOpacity 
+            style={styles.menuButton}
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+          >
             <Ionicons name="menu" size={30} color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Librería</Text>
@@ -25,7 +30,7 @@ export default function LibraryScreen() {
         <View style={styles.content}>
           {/* Botón Atrás */}
           <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <AntDesign name="arrow-left" size={40} color="black" />
+            <Ionicons name="arrow-back-circle" size={40} color="black" />
             <Text style={styles.backText}>Atrás</Text>
           </TouchableOpacity>
 
@@ -61,7 +66,7 @@ export default function LibraryScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#3b82f6' // Mismo color que el header
+    backgroundColor: '#3b82f6'
   },
   header: {
     height: 60,
@@ -71,9 +76,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
   },
   menuButton: { 
-    borderRightWidth: 1, 
-    borderRightColor: 'rgba(255,255,255,0.3)', 
-    paddingRight: 15, 
     marginRight: 15 
   },
   headerTitle: { 
@@ -85,7 +87,7 @@ const styles = StyleSheet.create({
   content: { 
     flex: 1, 
     padding: 20,
-    backgroundColor: '#F8F9FA' // Fondo blanco del contenido
+    backgroundColor: '#F8F9FA'
   },
   
   backContainer: { 

@@ -1,6 +1,7 @@
 import { AntDesign, Ionicons } from '@expo/vector-icons';
+import { DrawerActions } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -8,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function UploadScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null);
+  const navigation = useNavigation();
 
   const pickVideo = async () => {
     // Solicitar permisos (necesario en algunas versiones de Android/iOS)
@@ -37,7 +39,10 @@ export default function UploadScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         {/* Header Azul */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.menuButton}>
+          <TouchableOpacity 
+            style={styles.menuButton}
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+          >
             <Ionicons name="menu" size={30} color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Subir Video</Text>
@@ -46,7 +51,7 @@ export default function UploadScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {/* Botón Atrás */}
           <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <AntDesign name='arrow-left' size={45} color="black" />
+            <AntDesign name="arrow-left" size={45} color="black" />
             <Text style={styles.backText}>Atrás</Text>
           </TouchableOpacity>
 
@@ -88,7 +93,7 @@ export default function UploadScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#3b82f6' // Mismo color que el header
+    backgroundColor: '#3b82f6'
   },
   header: {
     height: 60,
@@ -98,9 +103,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
   },
   menuButton: { 
-    borderRightWidth: 1, 
-    borderRightColor: 'rgba(255,255,255,0.3)', 
-    paddingRight: 15, 
     marginRight: 15 
   },
   headerTitle: { 
@@ -112,8 +114,8 @@ const styles = StyleSheet.create({
   content: { 
     flexGrow: 1,
     padding: 20, 
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA' // Fondo blanco del contenido
+    alignItems: 'stretch',
+    backgroundColor: '#F8F9FA'
   },
   
   backContainer: { 
@@ -148,8 +150,8 @@ const styles = StyleSheet.create({
 
   stepsContainer: { 
     width: '100%', 
-    gap: 15, 
-    paddingHorizontal: 0
+    gap: 15,
+    paddingBottom: 20 
   },
   stepBox: {
     width: '100%',
