@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { AntDesign, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -46,7 +46,7 @@ export default function UploadScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {/* Botón Atrás */}
           <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <Ionicons name="arrow-back-circle" size={45} color="black" />
+            <AntDesign name='arrow-left' size={45} color="black" />
             <Text style={styles.backText}>Atrás</Text>
           </TouchableOpacity>
 
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
   stepsContainer: { 
     width: '100%', 
     gap: 15, 
-    paddingHorizontal: 20
+    paddingHorizontal: 0
   },
   stepBox: {
     width: '100%',

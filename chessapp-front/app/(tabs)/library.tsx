@@ -1,4 +1,4 @@
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -25,7 +25,7 @@ export default function LibraryScreen() {
         <View style={styles.content}>
           {/* Botón Atrás */}
           <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <Ionicons name="arrow-back-circle" size={40} color="black" />
+            <AntDesign name="arrow-left" size={40} color="black" />
             <Text style={styles.backText}>Atrás</Text>
           </TouchableOpacity>
 

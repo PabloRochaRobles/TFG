@@ -23,23 +23,22 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.content}>
+
+          <Text style={styles.mainTitle}>Analiza todas tus partidas de ajedrez con solo grabarlas</Text>
+
           <TouchableOpacity style={styles.mainButton} onPress={() => router.push('/upload')}>
             <FontAwesome name="upload" size={28} color="white" style={{ marginRight: 10 }} />
             <Text style={styles.buttonText}>Subir vídeo</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.mainButton, styles.secondaryButton]} 
-            onPress={() => router.push('/camera')}
-          >
+            style={[styles.mainButton, styles.secondaryButton]} onPress={() => router.push('/camera')}>
             <FontAwesome name="camera" size={28} color="white" style={{ marginRight: 10 }} />
             <Text style={styles.buttonText}>Grabar vídeo</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.mainButton, styles.accentButton]} 
-            onPress={() => router.push('/library')}
-          >
+            style={[styles.mainButton, styles.accentButton]} onPress={() => router.push('/library')}>
             <FontAwesome name="bookmark" size={28} color="white" style={{ marginRight: 10 }} />
             <Text style={styles.buttonText}>Ver librería</Text>
           </TouchableOpacity>
@@ -79,20 +78,34 @@ const styles = StyleSheet.create({
     gap: 20,
     backgroundColor: '#F8F9FA' // Fondo blanco del contenido
   },
+  mainTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 10,
+    textAlign: 'center',
+    width: '80%',
+  },
   mainButton: {
     width: '80%',
     height: 60,
-    backgroundColor: '#2c3e50',
+    backgroundColor: '#0b30ea',
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     flexDirection: 'row', // Para poner ícono + texto
   },
-  secondaryButton: { backgroundColor: '#34495e' },
-  accentButton: { backgroundColor: '#27ae60' },
+  secondaryButton: { backgroundColor: '#2fea0a' },
+  accentButton: { backgroundColor: '#ea0b30' },
   buttonText: { 
     color: '#fff', 
     fontSize: 18, 
     fontWeight: '600' 
+  },
+  gradientButton: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    borderRadius: 6,
   },
 });
