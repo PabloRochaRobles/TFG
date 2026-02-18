@@ -1,5 +1,6 @@
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { DrawerActions } from '@react-navigation/native';
+import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -8,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function HomeScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
+  const navigation = useNavigation();
 
   return (
     <>
@@ -16,7 +18,9 @@ export default function HomeScreen() {
 
         {/* Header Azul */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.menuButton}>
+          <TouchableOpacity 
+          style={styles.menuButton} 
+          onPress ={() => navigation.dispatch(DrawerActions.openDrawer())}>
             <Ionicons name="menu" size={30} color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Inicio</Text>

@@ -8,23 +8,26 @@
     "scheme": "chessappfront",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    
     "ios": {
       "supportsTablet": true
     },
+    
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#F0D9B5",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
+    
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+    
     "plugins": [
       "expo-router",
       [
@@ -33,20 +36,17 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "backgroundColor": "#F0D9B5"
         }
       ],
-
       [
-      "expo-camera",
+        "expo-camera",
         {
-          "recordAudioPermission": "Allow ---- to record audio for video analysis"
+          "recordAudioPermission": "Allow ChessVision to record audio for video analysis"
         }
       ]
     ],
+    
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
