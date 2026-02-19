@@ -2,9 +2,11 @@ import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { useRouter } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
+import { StyleSheet, View } from 'react-native';
 
 function CustomDrawerContent(props: any) {
   const router = useRouter();
+  const DrawerSeparator = () => (<View style={styles.separator} />);
 
   return (
     <DrawerContentScrollView {...props}>
@@ -17,6 +19,23 @@ function CustomDrawerContent(props: any) {
         )}
         onPress={() => {
           props.navigation.closeDrawer();
+        }}
+        activeTintColor="#3b82f6"
+        activeBackgroundColor="#e0f2fe"
+        inactiveTintColor="#000"
+        labelStyle={{ fontSize: 18, fontWeight: '500' }}
+        style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
+      />
+
+      <DrawerSeparator />
+      
+      <DrawerItem
+        label="Inicio"
+        icon={({ color, size }) => (
+          <FontAwesome name="home" size={size} color={color} />
+        )}
+        onPress={() => {
+          props.navigation.closeDrawer();
           router.push('/(drawer)/(tabs)');
         }}
         activeTintColor="#3b82f6"
@@ -25,7 +44,7 @@ function CustomDrawerContent(props: any) {
         labelStyle={{ fontSize: 18, fontWeight: '500' }}
         style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
       />
-      
+
       <DrawerItem
         label="Subir video"
         icon={({ color, size }) => (
@@ -73,7 +92,25 @@ function CustomDrawerContent(props: any) {
         labelStyle={{ fontSize: 18, fontWeight: '500' }}
         style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
       />
-      
+
+      <DrawerItem
+        label="Usuario"
+        icon={({ color, size }) => (
+          <FontAwesome name="user" size={size} color={color} />
+        )}
+        onPress={() => {
+          props.navigation.closeDrawer();
+          router.push('/(drawer)/(tabs)/user');
+        }}
+        activeTintColor="#3b82f6"
+        activeBackgroundColor="#e0f2fe"
+        inactiveTintColor="#000"
+        labelStyle={{ fontSize: 18, fontWeight: '500' }}
+        style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
+      />
+
+      <DrawerSeparator />
+
       <DrawerItem
         label="Ajustes"
         icon={({ color, size }) => (
@@ -108,6 +145,15 @@ function CustomDrawerContent(props: any) {
     </DrawerContentScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  separator: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 10,
+    marginHorizontal: 20,
+  },
+});
 
 export default function DrawerLayout() {
   return (

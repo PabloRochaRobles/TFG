@@ -1,4 +1,4 @@
-import { AntDesign, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -23,15 +23,10 @@ export default function UserScreen() {
           >
             <Ionicons name="menu" size={30} color="white" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Librería</Text>
+          <Text style={styles.headerTitle}>Usuario</Text>
         </View>
 
         <View style={styles.content}>
-          {/* Botón Atrás */}
-          <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <AntDesign name="arrow-left" size={45} color="black" />
-            <Text style={styles.backText}>Atrás</Text>
-          </TouchableOpacity>
 
         </View>
       </SafeAreaView>

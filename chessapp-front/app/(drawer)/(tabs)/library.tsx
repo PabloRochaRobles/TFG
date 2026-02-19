@@ -1,4 +1,4 @@
-import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRouter } from 'expo-router';
@@ -28,11 +28,6 @@ export default function LibraryScreen() {
         </View>
 
         <View style={styles.content}>
-          {/* Botón Atrás */}
-          <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <AntDesign name="arrow-left" size={45} color="black" />
-            <Text style={styles.backText}>Atrás</Text>
-          </TouchableOpacity>
 
           {/* Contador de Vídeos */}
           <Text style={styles.counterText}>{videoCount} videos</Text>

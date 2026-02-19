@@ -1,5 +1,6 @@
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
@@ -19,33 +20,39 @@ export default function HomeScreen() {
         {/* Header Azul */}
         <View style={styles.header}>
           <TouchableOpacity 
-          style={styles.menuButton} 
-          onPress ={() => navigation.dispatch(DrawerActions.openDrawer())}>
+            style={styles.menuButton} 
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+          >
             <Ionicons name="menu" size={30} color="white" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Inicio</Text>
         </View>
 
         <View style={styles.content}>
-
-          <Text style={styles.mainTitle}>Analiza todas tus partidas de ajedrez con solo grabarlas</Text>
-
           <TouchableOpacity style={styles.mainButton} onPress={() => router.push('/upload')}>
-            <FontAwesome name="upload" size={28} color="white" style={{ marginRight: 10 }} />
-            <Text style={styles.buttonText}>Subir vídeo</Text>
+            <LinearGradient
+              colors={['#007AFF', '#8E54E9']} // Azul a Púrpura
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.gradientButton}
+            />
+            <View style={styles.buttonContent}>
+              <FontAwesome5 name="chess" size={45} color="white" />
+              <Text style={styles.buttonText}>Analizar una nueva partida</Text>
+            </View>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.mainButton, styles.secondaryButton]} onPress={() => router.push('/camera')}>
-            <FontAwesome name="camera" size={28} color="white" style={{ marginRight: 10 }} />
-            <Text style={styles.buttonText}>Grabar vídeo</Text>
+         <TouchableOpacity 
+            style={[styles.mainButton, styles.solidButton]} 
+            onPress={() => router.push('/library')}
+          >
+            <View style={styles.buttonContent}>
+              <FontAwesome5 name="bookmark" size={45} color="white" />
+              <Text style={styles.buttonText}>Ver mis partidas</Text>
+            </View>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.mainButton, styles.accentButton]} onPress={() => router.push('/library')}>
-            <FontAwesome name="bookmark" size={28} color="white" style={{ marginRight: 10 }} />
-            <Text style={styles.buttonText}>Ver librería</Text>
-          </TouchableOpacity>
+
         </View>
       </SafeAreaView>
     </>
@@ -55,7 +62,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#3b82f6' // Mismo color que el header
+    backgroundColor: '#3b82f6'
   },
   header: {
     height: 60,
@@ -77,10 +84,11 @@ const styles = StyleSheet.create({
   },
   content: { 
     flex: 1, 
-    justifyContent: 'center', 
+    justifyContent: 'flex-start',
     alignItems: 'center', 
     gap: 20,
-    backgroundColor: '#F8F9FA' // Fondo blanco del contenido
+    backgroundColor: '#F8F9FA',
+    paddingTop: 40,
   },
   mainTitle: {
     fontSize: 24,
@@ -92,24 +100,34 @@ const styles = StyleSheet.create({
   },
   mainButton: {
     width: '80%',
-    height: 60,
-    backgroundColor: '#0b30ea',
+    height: 120,
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    flexDirection: 'row', // Para poner ícono + texto
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
-  secondaryButton: { backgroundColor: '#2fea0a' },
-  accentButton: { backgroundColor: '#ea0b30' },
+  buttonContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
   buttonText: { 
     color: '#fff', 
-    fontSize: 18, 
-    fontWeight: '600' 
+    fontSize: 22,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   gradientButton: {
     position: 'absolute',
     width: '100%',
     height: '100%',
-    borderRadius: 6,
+    borderRadius: 12,
+  },
+   solidButton: {
+    backgroundColor: '#10b981', // Verde sólido - puedes cambiar el color
   },
 });

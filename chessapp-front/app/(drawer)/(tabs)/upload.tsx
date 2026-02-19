@@ -1,7 +1,7 @@
-import { AntDesign, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { router, useNavigation } from 'expo-router';
+import { useNavigation } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -49,11 +49,6 @@ export default function UploadScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.content}>
-          {/* Botón Atrás */}
-          <TouchableOpacity style={styles.backContainer} onPress={() => router.back()}>
-            <AntDesign name="arrow-left" size={45} color="black" />
-            <Text style={styles.backText}>Atrás</Text>
-          </TouchableOpacity>
 
           {/* Zona de Selección de Vídeo */}
           <TouchableOpacity style={styles.uploadBox} onPress={pickVideo}>
