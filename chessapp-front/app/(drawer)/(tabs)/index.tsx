@@ -1,4 +1,4 @@
-import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+import { FontAwesome, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRouter } from 'expo-router';
@@ -31,7 +31,7 @@ export default function HomeScreen() {
         <View style={styles.content}>
           <TouchableOpacity style={styles.mainButton} onPress={() => router.push('/upload')}>
             <LinearGradient
-              colors={['#007AFF', '#8E54E9']} // Azul a Púrpura
+              colors={['#007AFF', '#8E54E9']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.gradientButton}
@@ -44,11 +44,11 @@ export default function HomeScreen() {
 
          <TouchableOpacity 
             style={[styles.mainButton, styles.solidButton]} 
-            onPress={() => router.push('/library')}
+            onPress={() => router.push('/tips')}
           >
             <View style={styles.buttonContent}>
-              <FontAwesome5 name="bookmark" size={45} color="white" />
-              <Text style={styles.buttonText}>Ver mis partidas</Text>
+              <FontAwesome name="exclamation-circle" size={45} color="white" />
+              <Text style={styles.buttonText}>Consejos para la grabación de partidas</Text>
             </View>
           </TouchableOpacity>
 
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   },
   mainButton: {
     width: '80%',
-    height: 120,
+    height: 160,
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
