@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { DrawerActions } from '@react-navigation/native';
 import { useNavigation } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
@@ -15,12 +14,12 @@ export default function UploadScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         {/* Header Azul */}
         <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.menuButton}
-            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
-          >
-            <Ionicons name="menu" size={30} color="white" />
-          </TouchableOpacity>
+            <TouchableOpacity 
+                style={styles.backButton}
+                onPress={() => navigation.goBack()}
+                    >
+                      <Ionicons name="arrow-back" size={28} color="white" />
+                    </TouchableOpacity>
           <Text style={styles.headerTitle}>Consejos para la grabación</Text>
         </View>
 
@@ -68,6 +67,9 @@ const styles = StyleSheet.create({
   },
   menuButton: { 
     marginRight: 15 
+  },
+  backButton: {
+    marginRight: 15,
   },
   headerTitle: { 
     color: 'white', 
