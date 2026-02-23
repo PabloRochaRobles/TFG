@@ -1,13 +1,17 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function AboutScreen() {
   const router = useRouter();
   const navigation = useNavigation();
+  const colors = useThemeColors();
+  const { isDarkMode } = useTheme();
 
   const appVersion = '1.0.0';
   const buildNumber = '2026.02.15';
@@ -22,12 +26,10 @@ export default function AboutScreen() {
 
   const handleOpenPrivacy = () => {
     Alert.alert('Política de Privacidad', 'Abriendo política de privacidad...');
-    // Linking.openURL('https://chessvision.app/privacy');
   };
 
   const handleOpenTerms = () => {
     Alert.alert('Términos de Uso', 'Abriendo términos de uso...');
-    // Linking.openURL('https://chessvision.app/terms');
   };
 
   const handleOpenLicenses = () => {
@@ -36,7 +38,6 @@ export default function AboutScreen() {
 
   const handleRateApp = () => {
     Alert.alert('Valorar App', '¡Gracias por tu apoyo! Redirigiendo a la tienda...');
-    // Linking.openURL('market://details?id=com.chessvision.app');
   };
 
   const handleShare = () => {
@@ -45,42 +46,42 @@ export default function AboutScreen() {
 
   return (
     <>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
           <TouchableOpacity 
             style={styles.backButton}
             onPress={() => router.back()}
           >
-            <Ionicons name="arrow-back" size={28} color="white" />
+            <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Acerca de</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Acerca de</Text>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
-            <Ionicons name="menu" size={28} color="white" />
+            <Ionicons name="menu" size={28} color={colors.headerText} />
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
+        <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
           {/* Logo y nombre de la app */}
           <View style={styles.appInfo}>
-            <View style={styles.logoContainer}>
-              <FontAwesome5 name="chess" size={60} color="#3b82f6" />
+            <View style={[styles.logoContainer, { backgroundColor: colors.primaryLight }]}>
+              <FontAwesome5 name="chess" size={60} color={colors.primary} />
             </View>
-            <Text style={styles.appName}>ChessVision</Text>
-            <Text style={styles.tagline}>Analiza tus partidas con IA</Text>
-            <Text style={styles.version}>Versión {appVersion}</Text>
-            <Text style={styles.buildNumber}>Build {buildNumber}</Text>
+            <Text style={[styles.appName, { color: colors.text }]}>ChessVision</Text>
+            <Text style={[styles.tagline, { color: colors.textSecondary }]}>Analiza tus partidas con IA</Text>
+            <Text style={[styles.version, { color: colors.primary }]}>Versión {appVersion}</Text>
+            <Text style={[styles.buildNumber, { color: colors.textSecondary }]}>Build {buildNumber}</Text>
           </View>
 
           {/* Descripción */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>¿Qué es ChessVision?</Text>
-            <View style={styles.card}>
-              <Text style={styles.description}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>¿Qué es ChessVision?</Text>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
+              <Text style={[styles.description, { color: colors.textSecondary }]}>
                 ChessVision es una aplicación innovadora que utiliza inteligencia artificial para 
                 analizar partidas de ajedrez grabadas en video. Simplemente graba tu partida con 
                 tu smartphone y nuestra IA detectará automáticamente los movimientos, proporcionándote 
@@ -91,35 +92,35 @@ export default function AboutScreen() {
 
           {/* Características */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Características principales</Text>
-            <View style={styles.card}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Características principales</Text>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.featureItem}>
-                <FontAwesome5 name="video" size={20} color="#3b82f6" />
-                <Text style={styles.featureText}>
+                <FontAwesome5 name="video" size={20} color={colors.primary} />
+                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                   Detección automática de movimientos mediante grabación de video
                 </Text>
               </View>
               <View style={styles.featureItem}>
-                <FontAwesome5 name="brain" size={20} color="#3b82f6" />
-                <Text style={styles.featureText}>
+                <FontAwesome5 name="brain" size={20} color={colors.primary} />
+                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                   Análisis con motor de ajedrez Stockfish integrado
                 </Text>
               </View>
               <View style={styles.featureItem}>
-                <FontAwesome5 name="chart-line" size={20} color="#3b82f6" />
-                <Text style={styles.featureText}>
+                <FontAwesome5 name="chart-line" size={20} color={colors.primary} />
+                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                   Estadísticas detalladas de tu progreso y ELO
                 </Text>
               </View>
               <View style={styles.featureItem}>
-                <FontAwesome5 name="cloud" size={20} color="#3b82f6" />
-                <Text style={styles.featureText}>
+                <FontAwesome5 name="cloud" size={20} color={colors.primary} />
+                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                   Almacenamiento en la nube de tus partidas
                 </Text>
               </View>
               <View style={styles.featureItem}>
-                <FontAwesome5 name="book" size={20} color="#3b82f6" />
-                <Text style={styles.featureText}>
+                <FontAwesome5 name="book" size={20} color={colors.primary} />
+                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                   Biblioteca de aperturas y consejos personalizados
                 </Text>
               </View>
@@ -128,140 +129,140 @@ export default function AboutScreen() {
 
           {/* Equipo */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Desarrollado por</Text>
-            <View style={styles.card}>
-              <Text style={styles.teamInfo}>
-                <Text style={styles.bold}>Universidad de Málaga</Text>{'\n'}
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Desarrollado por</Text>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
+              <Text style={[styles.teamInfo, { color: colors.textSecondary }]}>
+                <Text style={[styles.bold, { color: colors.text }]}>Universidad de Málaga</Text>{'\n'}
                 Trabajo Fin de Grado{'\n'}
                 Grado en Ingeniería Informática{'\n\n'}
                 
-                <Text style={styles.bold}>Autor:</Text> [Tu Nombre]{'\n'}
-                <Text style={styles.bold}>Tutor:</Text> [Nombre del Tutor]{'\n'}
-                <Text style={styles.bold}>Año:</Text> 2026
+                <Text style={[styles.bold, { color: colors.text }]}>Autor:</Text> [Tu Nombre]{'\n'}
+                <Text style={[styles.bold, { color: colors.text }]}>Tutor:</Text> [Nombre del Tutor]{'\n'}
+                <Text style={[styles.bold, { color: colors.text }]}>Año:</Text> 2026
               </Text>
             </View>
           </View>
 
           {/* Tecnologías */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Tecnologías utilizadas</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Tecnologías utilizadas</Text>
             <View style={styles.techGrid}>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>React Native</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>React Native</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>Expo</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>Expo</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>TensorFlow</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>TensorFlow</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>OpenCV</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>OpenCV</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>Stockfish</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>Stockfish</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>Node.js</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>Node.js</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>Python</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>Python</Text>
               </View>
-              <View style={styles.techBadge}>
-                <Text style={styles.techText}>PostgreSQL</Text>
+              <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+                <Text style={[styles.techText, { color: colors.primary }]}>PostgreSQL</Text>
               </View>
             </View>
           </View>
 
           {/* Contacto y enlaces */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Contacto y soporte</Text>
-            <View style={styles.card}>
-              <TouchableOpacity style={styles.linkItem} onPress={handleOpenWebsite}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Contacto y soporte</Text>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenWebsite}>
                 <View style={styles.linkLeft}>
-                  <Ionicons name="globe-outline" size={24} color="#3b82f6" />
-                  <Text style={styles.linkText}>Sitio web</Text>
+                  <Ionicons name="globe-outline" size={24} color={colors.primary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>Sitio web</Text>
                 </View>
-                <Ionicons name="open-outline" size={20} color="#9ca3af" />
+                <Ionicons name="open-outline" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.linkItem} onPress={handleSendEmail}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleSendEmail}>
                 <View style={styles.linkLeft}>
-                  <Ionicons name="mail-outline" size={24} color="#3b82f6" />
-                  <Text style={styles.linkText}>soporte@chessvision.app</Text>
+                  <Ionicons name="mail-outline" size={24} color={colors.primary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>soporte@chessvision.app</Text>
                 </View>
-                <Ionicons name="open-outline" size={20} color="#9ca3af" />
+                <Ionicons name="open-outline" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.linkItem}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]}>
                 <View style={styles.linkLeft}>
-                  <FontAwesome5 name="twitter" size={22} color="#3b82f6" />
-                  <Text style={styles.linkText}>@ChessVisionApp</Text>
+                  <FontAwesome5 name="twitter" size={22} color={colors.primary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>@ChessVisionApp</Text>
                 </View>
-                <Ionicons name="open-outline" size={20} color="#9ca3af" />
+                <Ionicons name="open-outline" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.linkItem}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]}>
                 <View style={styles.linkLeft}>
-                  <FontAwesome5 name="instagram" size={22} color="#3b82f6" />
-                  <Text style={styles.linkText}>@chessvision</Text>
+                  <FontAwesome5 name="instagram" size={22} color={colors.primary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>@chessvision</Text>
                 </View>
-                <Ionicons name="open-outline" size={20} color="#9ca3af" />
+                <Ionicons name="open-outline" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
 
           {/* Legal */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Legal</Text>
-            <View style={styles.card}>
-              <TouchableOpacity style={styles.linkItem} onPress={handleOpenPrivacy}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Legal</Text>
+            <View style={[styles.card, { backgroundColor: colors.card }]}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenPrivacy}>
                 <View style={styles.linkLeft}>
-                  <Ionicons name="shield-checkmark-outline" size={24} color="#6b7280" />
-                  <Text style={styles.linkText}>Política de Privacidad</Text>
+                  <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>Política de Privacidad</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.linkItem} onPress={handleOpenTerms}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenTerms}>
                 <View style={styles.linkLeft}>
-                  <Ionicons name="document-text-outline" size={24} color="#6b7280" />
-                  <Text style={styles.linkText}>Términos de Uso</Text>
+                  <Ionicons name="document-text-outline" size={24} color={colors.textSecondary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>Términos de Uso</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.linkItem} onPress={handleOpenLicenses}>
+              <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenLicenses}>
                 <View style={styles.linkLeft}>
-                  <Ionicons name="code-slash-outline" size={24} color="#6b7280" />
-                  <Text style={styles.linkText}>Licencias de código abierto</Text>
+                  <Ionicons name="code-slash-outline" size={24} color={colors.textSecondary} />
+                  <Text style={[styles.linkText, { color: colors.text }]}>Licencias de código abierto</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#9ca3af" />
+                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
 
           {/* Acciones */}
           <View style={styles.section}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleRateApp}>
+            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={handleRateApp}>
               <Ionicons name="star" size={24} color="#f59e0b" />
               <Text style={styles.actionButtonText}>Valorar en la tienda</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.actionButton, styles.secondaryButton]} onPress={handleShare}>
-              <Ionicons name="share-social" size={24} color="#3b82f6" />
-              <Text style={[styles.actionButtonText, styles.secondaryButtonText]}>
+            <TouchableOpacity style={[styles.actionButton, styles.secondaryButton, { backgroundColor: colors.card, borderColor: colors.primary }]} onPress={handleShare}>
+              <Ionicons name="share-social" size={24} color={colors.primary} />
+              <Text style={[styles.actionButtonText, styles.secondaryButtonText, { color: colors.primary }]}>
                 Compartir con amigos
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Copyright */}
-          <View style={styles.footer}>
-            <Text style={styles.copyright}>
+          <View style={[styles.footer, { borderTopColor: colors.border }]}>
+            <Text style={[styles.copyright, { color: colors.textSecondary }]}>
               © 2026 ChessVision. Todos los derechos reservados.
             </Text>
-            <Text style={styles.madeWith}>
+            <Text style={[styles.madeWith, { color: colors.textSecondary }]}>
               Hecho con ♟️ para la comunidad de ajedrez
             </Text>
           </View>
@@ -276,12 +277,10 @@ export default function AboutScreen() {
 
 const styles = StyleSheet.create({
   container: { 
-    flex: 1, 
-    backgroundColor: '#3b82f6' 
+    flex: 1,
   },
   header: {
     height: 60,
-    backgroundColor: '#3b82f6',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -294,13 +293,11 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   headerTitle: { 
-    color: 'white', 
     fontSize: 22, 
     fontWeight: 'bold',
   },
   scrollView: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
   },
   content: {
     paddingTop: 30,
@@ -316,7 +313,6 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#eff6ff',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 15,
@@ -329,22 +325,18 @@ const styles = StyleSheet.create({
   appName: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1f2937',
     marginBottom: 8,
   },
   tagline: {
     fontSize: 16,
-    color: '#6b7280',
     marginBottom: 15,
   },
   version: {
     fontSize: 15,
-    color: '#3b82f6',
     fontWeight: '600',
   },
   buildNumber: {
     fontSize: 12,
-    color: '#9ca3af',
     marginTop: 4,
   },
 
@@ -355,11 +347,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#1f2937',
     marginBottom: 12,
   },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
     elevation: 2,
@@ -372,7 +362,6 @@ const styles = StyleSheet.create({
   // Descripción
   description: {
     fontSize: 15,
-    color: '#4b5563',
     lineHeight: 24,
   },
 
@@ -386,19 +375,16 @@ const styles = StyleSheet.create({
   featureText: {
     flex: 1,
     fontSize: 15,
-    color: '#4b5563',
     lineHeight: 22,
   },
 
   // Equipo
   teamInfo: {
     fontSize: 15,
-    color: '#4b5563',
     lineHeight: 24,
   },
   bold: {
     fontWeight: '700',
-    color: '#1f2937',
   },
 
   // Tecnologías
@@ -408,17 +394,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   techBadge: {
-    backgroundColor: '#eff6ff',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#bfdbfe',
   },
   techText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#3b82f6',
   },
 
   // Enlaces
@@ -428,7 +411,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
   },
   linkLeft: {
     flexDirection: 'row',
@@ -438,7 +420,6 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 15,
-    color: '#1f2937',
   },
 
   // Botones de acción
@@ -446,7 +427,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3b82f6',
     paddingVertical: 16,
     borderRadius: 12,
     gap: 10,
@@ -463,12 +443,10 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   secondaryButton: {
-    backgroundColor: '#fff',
     borderWidth: 2,
-    borderColor: '#3b82f6',
   },
   secondaryButtonText: {
-    color: '#3b82f6',
+    // Color aplicado inline
   },
 
   // Footer
@@ -477,17 +455,14 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
   },
   copyright: {
     fontSize: 13,
-    color: '#6b7280',
     marginBottom: 8,
     textAlign: 'center',
   },
   madeWith: {
     fontSize: 14,
-    color: '#9ca3af',
     textAlign: 'center',
   },
 });

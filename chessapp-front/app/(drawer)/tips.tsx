@@ -1,50 +1,68 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from 'expo-router';
+import { DrawerActions } from '@react-navigation/native';
+import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../contexts/ThemeContext';
 
-export default function UploadScreen() {
+export default function TipsScreen() {
   const navigation = useNavigation();
+  const colors = useThemeColors();
+  const { isDarkMode } = useTheme();
+  const router = useRouter();
 
   return (
     <>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.container} edges={['top']}>
-        {/* Header Azul */}
-        <View style={styles.header}>
-            <TouchableOpacity 
-                style={styles.backButton}
-                onPress={() => navigation.goBack()}
-                    >
-                      <Ionicons name="arrow-back" size={28} color="white" />
-                    </TouchableOpacity>
-          <Text style={styles.headerTitle}>Consejos para la grabación</Text>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
+        <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={28} color={colors.headerText} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Consejos para la grabación</Text>
+          <TouchableOpacity 
+            style={styles.menuButton}
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+          >
+            <Ionicons name="menu" size={28} color={colors.headerText} />
+          </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={styles.content}>
-
+        <ScrollView contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}>
           {/* Pasos / Instrucciones */}
           <View style={styles.stepsContainer}>
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Consejo 1:</Text>
-              <Text style={styles.stepDescription}>Asegúrate que la grabación se realiza en un entorno bien iluminado y evita luces directas que creen reflejos sobre el tablero</Text>
+            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 1:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>
+                Asegúrate que la grabación se realiza en un entorno bien iluminado y evita luces directas que creen reflejos sobre el tablero
+              </Text>
             </View>
 
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Consejo 2:</Text>
-              <Text style={styles.stepDescription}>Mantén la estabilidad de la grabación. Usar un tripode o un soporte previene los movimientos de la cámara</Text>
+            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 2:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>
+                Mantén la estabilidad de la grabación. Usar un tripode o un soporte previene los movimientos de la cámara
+              </Text>
             </View>
 
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Consejo 3:</Text>
-              <Text style={styles.stepDescription}>Coloca la cámara desde una posición frontal y elevada que permita diferenciar claramente las piezas del tablero.</Text>
+            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 3:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>
+                Coloca la cámara desde una posición frontal y elevada que permita diferenciar claramente las piezas del tablero.
+              </Text>
             </View>
 
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Consejo 4:</Text>
-              <Text style={styles.stepDescription}>Mantenga las manos fuera del encuadre y realice movimientos claros.</Text>
+            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 4:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>
+                Mantenga las manos fuera del encuadre y realice movimientos claros.
+              </Text>
             </View>
           </View>
         </ScrollView>
@@ -55,65 +73,33 @@ export default function UploadScreen() {
 
 const styles = StyleSheet.create({
   container: { 
-    flex: 1, 
-    backgroundColor: '#3b82f6'
+    flex: 1,
   },
   header: {
     height: 60,
-    backgroundColor: '#3b82f6',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
+    justifyContent: 'space-between',
   },
   menuButton: { 
-    marginRight: 15 
+    padding: 5,
+    width: 38,
   },
   backButton: {
     marginRight: 15,
   },
   headerTitle: { 
-    color: 'white', 
     fontSize: 22, 
-    fontWeight: 'bold' 
+    fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'center',
   },
-  
   content: { 
     flexGrow: 1,
     padding: 20, 
     alignItems: 'stretch',
-    backgroundColor: '#F8F9FA'
   },
-  
-  backContainer: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    alignSelf: 'flex-start', 
-    marginBottom: 20 
-  },
-  backText: { 
-    fontSize: 20, 
-    fontWeight: 'bold', 
-    marginLeft: 10 
-  },
-
-  uploadBox: {
-    width: '100%',
-    aspectRatio: 1.2,
-    backgroundColor: '#D1D5DB',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#86b8ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  uploadText: { 
-    fontSize: 18, 
-    fontWeight: 'bold', 
-    textAlign: 'center', 
-    marginTop: 15 
-  },
-
   stepsContainer: { 
     width: '100%', 
     gap: 15,
@@ -121,10 +107,8 @@ const styles = StyleSheet.create({
   },
   stepBox: {
     width: '100%',
-    backgroundColor: '#D1D5DB',
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#4B5563',
     padding: 15,
   },
   stepTitle: { 
@@ -133,10 +117,5 @@ const styles = StyleSheet.create({
   },
   stepDescription: { 
     fontSize: 16 
-  },
-  stepImage: {
-    width: '100%',
-    height: 250,
-    marginTop: 10,
   },
 });

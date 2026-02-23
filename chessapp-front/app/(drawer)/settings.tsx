@@ -1,3 +1,4 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
@@ -5,41 +6,27 @@ import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
+  const colors = useThemeColors();
+  const { isDarkMode, toggleTheme } = useTheme();
 
   // Estados para las configuraciones
   const [notifications, setNotifications] = useState(true);
   const [autoAnalysis, setAutoAnalysis] = useState(false);
   const [saveToCloud, setSaveToCloud] = useState(true);
   const [highQuality, setHighQuality] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
-
-  const themes = [
-    { id: 'blue', name: 'Azul (Predeterminado)', color: '#3b82f6' },
-    { id: 'green', name: 'Verde', color: '#10b981' },
-    { id: 'purple', name: 'Púrpura', color: '#8b5cf6' },
-    { id: 'orange', name: 'Naranja', color: '#f97316' },
-    { id: 'red', name: 'Rojo', color: '#ef4444' },
-  ];
 
   const languages = [
-    { id: 'es', name: 'Español', flag: '🇪🇸' },
-    { id: 'en', name: 'English', flag: '🇬🇧' },
-    { id: 'fr', name: 'Français', flag: '🇫🇷' },
-    { id: 'de', name: 'Deutsch', flag: '🇩🇪' },
+    { id: 'Español', name: 'Español', flag: '🇪🇸' },
+    { id: 'English', name: 'English', flag: '🇬🇧' },
   ];
-
-  const handleThemeSelect = (themeId: string) => {
-    Alert.alert('Tema seleccionado', `Has elegido el tema ${themeId}`);
-    // Aquí implementarás el cambio de tema real
-  };
 
   const handleLanguageSelect = (langId: string) => {
     Alert.alert('Idioma seleccionado', `Has elegido ${langId}`);
-    // Aquí implementarás el cambio de idioma real
   };
 
   const handleClearCache = () => {
@@ -70,84 +57,64 @@ export default function SettingsScreen() {
 
   return (
     <>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.header}>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
+        <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
           <TouchableOpacity 
             style={styles.backButton}
             onPress={() => router.back()}
           >
-            <Ionicons name="arrow-back" size={28} color="white" />
+            <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Ajustes</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Ajustes</Text>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
-            <Ionicons name="menu" size={28} color="white" />
+            <Ionicons name="menu" size={28} color={colors.headerText} />
           </TouchableOpacity>
         </View>
         
-        <ScrollView style={styles.content}>
+        <ScrollView style={[styles.content, { backgroundColor: colors.background }]}>
+          
           {/* Sección: Apariencia */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Apariencia</Text>
-            
-            {/* Tema de color */}
-            <View style={styles.settingGroup}>
-              <Text style={styles.settingLabel}>Tema de color</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.themeScroll}>
-                {themes.map((theme) => (
-                  <TouchableOpacity
-                    key={theme.id}
-                    style={styles.themeOption}
-                    onPress={() => handleThemeSelect(theme.id)}
-                  >
-                    <View style={[styles.colorCircle, { backgroundColor: theme.color }]}>
-                      {theme.id === 'blue' && (
-                        <Ionicons name="checkmark" size={24} color="white" />
-                      )}
-                    </View>
-                    <Text style={styles.themeName}>{theme.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Apariencia</Text>
 
             {/* Modo oscuro */}
-            <View style={styles.settingItem}>
+            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="moon" size={24} color="#6b7280" />
+                <Ionicons name="moon" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Modo oscuro</Text>
-                  <Text style={styles.settingDescription}>Tema oscuro para la app</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Modo oscuro</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Tema oscuro para la app</Text>
                 </View>
               </View>
               <Switch
-                value={darkMode}
-                onValueChange={setDarkMode}
-                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
-                thumbColor={darkMode ? '#fff' : '#f3f4f6'}
+                value={isDarkMode}
+                onValueChange={toggleTheme}
+                trackColor={{ false: '#d1d5db', true: colors.primary }}
+                thumbColor={isDarkMode ? '#fff' : '#f3f4f6'}
               />
             </View>
           </View>
 
           {/* Sección: Idioma */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Idioma y región</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Idioma y región</Text>
             
             {languages.map((lang) => (
               <TouchableOpacity
                 key={lang.id}
-                style={styles.settingItem}
+                style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
                 onPress={() => handleLanguageSelect(lang.id)}
               >
                 <View style={styles.settingLeft}>
                   <Text style={styles.flag}>{lang.flag}</Text>
-                  <Text style={styles.settingTitle}>{lang.name}</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>{lang.name}</Text>
                 </View>
                 {lang.id === 'es' && (
-                  <Ionicons name="checkmark-circle" size={24} color="#3b82f6" />
+                  <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
                 )}
               </TouchableOpacity>
             ))}
@@ -155,20 +122,20 @@ export default function SettingsScreen() {
 
           {/* Sección: Notificaciones */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Notificaciones</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Notificaciones</Text>
             
-            <View style={styles.settingItem}>
+            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="notifications" size={24} color="#6b7280" />
+                <Ionicons name="notifications" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Notificaciones push</Text>
-                  <Text style={styles.settingDescription}>Recibe alertas de nuevas partidas</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Notificaciones push</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Recibe alertas de nuevas partidas</Text>
                 </View>
               </View>
               <Switch
                 value={notifications}
                 onValueChange={setNotifications}
-                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                trackColor={{ false: '#d1d5db', true: colors.primary }}
                 thumbColor={notifications ? '#fff' : '#f3f4f6'}
               />
             </View>
@@ -176,36 +143,36 @@ export default function SettingsScreen() {
 
           {/* Sección: Análisis */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Análisis de partidas</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Análisis de partidas</Text>
             
-            <View style={styles.settingItem}>
+            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="flash" size={24} color="#6b7280" />
+                <Ionicons name="flash" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Análisis automático</Text>
-                  <Text style={styles.settingDescription}>Analizar al subir el video</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Análisis automático</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Analizar al subir el video</Text>
                 </View>
               </View>
               <Switch
                 value={autoAnalysis}
                 onValueChange={setAutoAnalysis}
-                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                trackColor={{ false: '#d1d5db', true: colors.primary }}
                 thumbColor={autoAnalysis ? '#fff' : '#f3f4f6'}
               />
             </View>
 
-            <View style={styles.settingItem}>
+            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="videocam" size={24} color="#6b7280" />
+                <Ionicons name="videocam" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Calidad de grabación</Text>
-                  <Text style={styles.settingDescription}>Alta calidad (1080p)</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Calidad de grabación</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Alta calidad (1080p)</Text>
                 </View>
               </View>
               <Switch
                 value={highQuality}
                 onValueChange={setHighQuality}
-                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                trackColor={{ false: '#d1d5db', true: colors.primary }}
                 thumbColor={highQuality ? '#fff' : '#f3f4f6'}
               />
             </View>
@@ -213,117 +180,117 @@ export default function SettingsScreen() {
 
           {/* Sección: Almacenamiento */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Almacenamiento y datos</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Almacenamiento y datos</Text>
             
-            <View style={styles.settingItem}>
+            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="cloud" size={24} color="#6b7280" />
+                <Ionicons name="cloud" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Guardar en la nube</Text>
-                  <Text style={styles.settingDescription}>Respaldo automático</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Guardar en la nube</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Respaldo automático</Text>
                 </View>
               </View>
               <Switch
                 value={saveToCloud}
                 onValueChange={setSaveToCloud}
-                trackColor={{ false: '#d1d5db', true: '#3b82f6' }}
+                trackColor={{ false: '#d1d5db', true: colors.primary }}
                 thumbColor={saveToCloud ? '#fff' : '#f3f4f6'}
               />
             </View>
 
-            <TouchableOpacity style={styles.settingItem} onPress={handleClearCache}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleClearCache}>
               <View style={styles.settingLeft}>
-                <Ionicons name="trash-outline" size={24} color="#6b7280" />
+                <Ionicons name="trash-outline" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Limpiar caché</Text>
-                  <Text style={styles.settingDescription}>Liberar espacio (124 MB)</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Limpiar caché</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Liberar espacio (124 MB)</Text>
                 </View>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem} onPress={handleExportData}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleExportData}>
               <View style={styles.settingLeft}>
-                <Ionicons name="download-outline" size={24} color="#6b7280" />
+                <Ionicons name="download-outline" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={styles.settingTitle}>Exportar partidas</Text>
-                  <Text style={styles.settingDescription}>Descargar en formato PGN</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Exportar partidas</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Descargar en formato PGN</Text>
                 </View>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Sección: Cuenta */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Cuenta</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Cuenta</Text>
             
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="person-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Editar perfil</Text>
+                <Ionicons name="person-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Editar perfil</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="key-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Cambiar contraseña</Text>
+                <Ionicons name="key-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Cambiar contraseña</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="shield-checkmark-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Privacidad y seguridad</Text>
+                <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Privacidad y seguridad</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Sección: Ayuda */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Ayuda y soporte</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Ayuda y soporte</Text>
             
-            <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/about')}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/about')}>
               <View style={styles.settingLeft}>
-                <Ionicons name="information-circle-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Acerca de</Text>
+                <Ionicons name="information-circle-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Acerca de</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="help-circle-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Tutorial</Text>
+                <Ionicons name="help-circle-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Tutorial</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="mail-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Contactar soporte</Text>
+                <Ionicons name="mail-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Contactar soporte</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.settingItem}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
-                <Ionicons name="star-outline" size={24} color="#6b7280" />
-                <Text style={styles.settingTitle}>Valorar la app</Text>
+                <Ionicons name="star-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Valorar la app</Text>
               </View>
-              <Ionicons name="chevron-forward" size={24} color="#9ca3af" />
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           {/* Sección: Peligro */}
           <View style={styles.section}>
             <TouchableOpacity 
-              style={[styles.settingItem, styles.dangerItem]} 
+              style={[styles.settingItem, styles.dangerItem, { borderBottomColor: colors.border }]} 
               onPress={handleDeleteAccount}
             >
               <View style={styles.settingLeft}>
@@ -336,8 +303,8 @@ export default function SettingsScreen() {
 
           {/* Versión */}
           <View style={styles.versionContainer}>
-            <Text style={styles.versionText}>ChessVision v1.0.0</Text>
-            <Text style={styles.versionSubtext}>© 2026 Todos los derechos reservados</Text>
+            <Text style={[styles.versionText, { color: colors.textSecondary }]}>ChessVision v1.0.0</Text>
+            <Text style={[styles.versionSubtext, { color: colors.textSecondary }]}>© 2026 Todos los derechos reservados</Text>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -347,12 +314,10 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { 
-    flex: 1, 
-    backgroundColor: '#3b82f6' 
+    flex: 1,
   },
   header: {
     height: 60,
-    backgroundColor: '#3b82f6',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -365,13 +330,11 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   headerTitle: { 
-    color: 'white', 
     fontSize: 22, 
     fontWeight: 'bold',
   },
   content: { 
-    flex: 1, 
-    backgroundColor: '#F8F9FA',
+    flex: 1,
   },
 
   // Secciones
@@ -382,7 +345,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#6b7280',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     paddingHorizontal: 20,
@@ -394,11 +356,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#fff',
     paddingVertical: 15,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
   },
   settingLeft: {
     flexDirection: 'row',
@@ -412,26 +372,21 @@ const styles = StyleSheet.create({
   settingTitle: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#1f2937',
   },
   settingDescription: {
     fontSize: 13,
-    color: '#9ca3af',
     marginTop: 2,
   },
 
   // Grupo de configuración
   settingGroup: {
-    backgroundColor: '#fff',
     paddingVertical: 15,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
   },
   settingLabel: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#1f2937',
     marginBottom: 15,
   },
 
@@ -458,7 +413,6 @@ const styles = StyleSheet.create({
   },
   themeName: {
     fontSize: 12,
-    color: '#6b7280',
     textAlign: 'center',
     maxWidth: 80,
   },
@@ -485,12 +439,10 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 14,
-    color: '#6b7280',
     fontWeight: '500',
   },
   versionSubtext: {
     fontSize: 12,
-    color: '#9ca3af',
     marginTop: 5,
   },
 });
