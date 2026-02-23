@@ -7,12 +7,19 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+// Imports de tema
+import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTheme } from '../../contexts/ThemeContext';
+
 export default function UploadScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const navigation = useNavigation();
+  
+  // Hooks de tema
+  const colors = useThemeColors();
+  const { isDarkMode } = useTheme();
 
   const pickVideo = async () => {
-    // Solicitar permisos (necesario en algunas versiones de Android/iOS)
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (status !== 'granted') {
@@ -20,63 +27,71 @@ export default function UploadScreen() {
       return;
     }
 
-    // Abrir el gestor de archivos/galería
     let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'], // Restringimos solo a vídeos
-      allowsEditing: true,    // Permite recortar el vídeo si es necesario
+      mediaTypes: ['videos'],
+      allowsEditing: true,
       quality: 1,
     });
 
     if (!result.canceled) {
       setVideoUri(result.assets[0].uri);
-      console.log("Vídeo seleccionado:", result.assets[0].uri);
     }
   };
 
   return (
     <>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.container} edges={['top']}>
-        {/* Header Azul */}
-        <View style={styles.header}>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
+        
+        {/* Header Dinámico */}
+        <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
-            <Ionicons name="menu" size={30} color="white" />
+            <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Subir Video</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Subir Video</Text>
         </View>
 
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}>
 
           {/* Zona de Selección de Vídeo */}
-          <TouchableOpacity style={styles.uploadBox} onPress={pickVideo}>
+          <TouchableOpacity 
+            style={[
+              styles.uploadBox, 
+              { 
+                backgroundColor: isDarkMode ? colors.card : '#D1D5DB', 
+                borderColor: colors.border 
+              }
+            ]} 
+            onPress={pickVideo}
+          >
             {videoUri ? (
               <Ionicons name="checkmark-circle" size={60} color="#27ae60" />
             ) : (
-              <Ionicons name="camera" size={60} color="black" />
+              <Ionicons name="camera" size={60} color={colors.text} />
             )}
-            <Text style={styles.uploadText}>
+            <Text style={[styles.uploadText, { color: colors.text }]}>
               {videoUri ? "Vídeo cargado con éxito" : "Toca para seleccionar un vídeo"}
             </Text>
           </TouchableOpacity>
 
           {/* Pasos / Instrucciones */}
           <View style={styles.stepsContainer}>
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Paso 1:</Text>
-              <Text style={styles.stepDescription}>Selecciona tu partida de ajedrez</Text>
+            <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 1:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>Selecciona tu partida de ajedrez</Text>
             </View>
 
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Paso 2:</Text>
-              <Text style={styles.stepDescription}>Pulsa el botón de generar análisis</Text>
+            <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 2:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>Pulsa el botón de generar análisis</Text>
             </View>
 
-            <View style={styles.stepBox}>
-              <Text style={styles.stepTitle}>Paso 3:</Text>
-              <Text style={styles.stepDescription}>Revisa el resultado obtenido</Text>
+            <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 3:</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>Revisa el resultado obtenido</Text>
             </View>
           </View>
         </ScrollView>
@@ -86,52 +101,25 @@ export default function UploadScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#3b82f6'
-  },
+  container: { flex: 1 },
   header: {
     height: 60,
-    backgroundColor: '#3b82f6',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
   },
-  menuButton: { 
-    marginRight: 15 
-  },
-  headerTitle: { 
-    color: 'white', 
-    fontSize: 22, 
-    fontWeight: 'bold' 
-  },
-  
+  menuButton: { marginRight: 15 },
+  headerTitle: { fontSize: 22, fontWeight: 'bold' },
   content: { 
     flexGrow: 1,
     padding: 20, 
     alignItems: 'stretch',
-    backgroundColor: '#F8F9FA'
   },
-  
-  backContainer: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    alignSelf: 'flex-start', 
-    marginBottom: 20 
-  },
-  backText: { 
-    fontSize: 20, 
-    fontWeight: 'bold', 
-    marginLeft: 10 
-  },
-
   uploadBox: {
     width: '100%',
     aspectRatio: 1.2,
-    backgroundColor: '#D1D5DB',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#4B5563',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 30,
@@ -142,7 +130,6 @@ const styles = StyleSheet.create({
     textAlign: 'center', 
     marginTop: 15 
   },
-
   stepsContainer: { 
     width: '100%', 
     gap: 15,
@@ -150,17 +137,10 @@ const styles = StyleSheet.create({
   },
   stepBox: {
     width: '100%',
-    backgroundColor: '#D1D5DB',
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: '#4B5563',
     padding: 15,
   },
-  stepTitle: { 
-    fontSize: 16, 
-    fontWeight: 'bold' 
-  },
-  stepDescription: { 
-    fontSize: 16 
-  },
+  stepTitle: { fontSize: 16, fontWeight: 'bold' },
+  stepDescription: { fontSize: 16 },
 });

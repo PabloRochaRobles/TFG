@@ -1,21 +1,25 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { isDarkMode } = useTheme();
+  const colors = useThemeColors();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#3b82f6',
-        tabBarInactiveTintColor: 'rgba(122, 122, 122, 0.5)',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: isDarkMode ? 'rgba(156, 163, 175, 0.5)' : 'rgba(122, 122, 122, 0.5)',
         tabBarShowLabel: false,
         tabBarStyle: {
-          backgroundColor: '#fff',
+          backgroundColor: colors.tabBar,
           borderTopWidth: 1,
-          borderTopColor: '#000',
+          borderTopColor: colors.tabBarBorder,
           height: 60 + insets.bottom,
           paddingBottom: insets.bottom,
           paddingTop: 8,
@@ -55,7 +59,6 @@ export default function TabLayout() {
         }}
       />
 
-
       <Tabs.Screen
         name="library"
         options={{
@@ -66,15 +69,6 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="user"
-        options={{
-          title: 'Usuario',
-          tabBarIcon: ({ color }) => (
-            <FontAwesome name="user" size={32} color={color} />
-          ),
-        }}
-      />
     </Tabs>
   );
 }

@@ -1,3 +1,4 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -6,35 +7,41 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export default function LibraryScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const videoCount = 0; // Simulamos que no hay vídeos para mostrar la vista de la imagen
+  const colors = useThemeColors();
+  const { isDarkMode } = useTheme();
+  const videoCount = 0;
 
   return (
     <>
-      <StatusBar style="light" />
-      <SafeAreaView style={styles.container} edges={['top']}>
-        {/* Header Azul Principal */}
-        <View style={styles.header}>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
+        {/* Header */}
+        <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
-            <Ionicons name="menu" size={30} color="white" />
+            <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Librería</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Librería</Text>
         </View>
 
-        <View style={styles.content}>
-
+        <View style={[styles.content, { backgroundColor: colors.background }]}>
           {/* Contador de Vídeos */}
-          <Text style={styles.counterText}>{videoCount} videos</Text>
+          <Text style={[styles.counterText, { color: colors.text }]}>
+            {videoCount} videos
+          </Text>
 
           {/* Estado Vacío (Empty State) */}
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No se ha subido ningún{"\n"}video aún</Text>
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              No se ha subido ningún{"\n"}video aún
+            </Text>
 
             {/* Botón con Degradado */}
             <TouchableOpacity 
@@ -42,7 +49,7 @@ export default function LibraryScreen() {
               onPress={() => router.push('/upload')}
             >
               <LinearGradient
-                colors={['#007AFF', '#8E54E9']} // Azul a Púrpura
+                colors={['#007AFF', '#8E54E9']}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
                 style={styles.gradientButton}
@@ -60,12 +67,10 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
   container: { 
-    flex: 1, 
-    backgroundColor: '#3b82f6'
+    flex: 1,
   },
   header: {
     height: 60,
-    backgroundColor: '#3b82f6',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
@@ -74,7 +79,6 @@ const styles = StyleSheet.create({
     marginRight: 15 
   },
   headerTitle: { 
-    color: 'white', 
     fontSize: 22, 
     fontWeight: 'bold' 
   },
@@ -82,7 +86,6 @@ const styles = StyleSheet.create({
   content: { 
     flex: 1, 
     padding: 20,
-    backgroundColor: '#F8F9FA'
   },
   
   backContainer: { 

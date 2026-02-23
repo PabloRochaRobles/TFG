@@ -1,17 +1,23 @@
+import { useThemeColors } from '@/hooks/use-theme-color';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { useRouter } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 
 function CustomDrawerContent(props: any) {
   const router = useRouter();
   const { isDarkMode, toggleTheme } = useTheme();
-  const DrawerSeparator = () => (<View style={styles.separator} />);
+  const colors = useThemeColors();
+  
+  const DrawerSeparator = () => (
+    <View style={[styles.separator, { backgroundColor: colors.border }]} />
+  );
 
   return (
-    <View style={styles.drawerContainer}>
+    <View style={[styles.drawerContainer, { backgroundColor: colors.card }]}>
       <DrawerContentScrollView {...props} contentContainerStyle={styles.scrollContent}>
         <DrawerItem
           label="Chess Analyzer"
@@ -21,9 +27,9 @@ function CustomDrawerContent(props: any) {
           onPress={() => {
             props.navigation.closeDrawer();
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -39,9 +45,9 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/(tabs)');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -55,9 +61,9 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/(tabs)/upload');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -71,9 +77,9 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/(tabs)/camera');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -87,25 +93,9 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/(tabs)/library');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
-          labelStyle={{ fontSize: 18, fontWeight: '500' }}
-          style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
-        />
-
-        <DrawerItem
-          label="Usuario"
-          icon={({ color, size }) => (
-            <FontAwesome name="user" size={size} color={color} />
-          )}
-          onPress={() => {
-            props.navigation.closeDrawer();
-            router.push('/(drawer)/(tabs)/user');
-          }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -121,9 +111,9 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/settings');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
@@ -137,17 +127,17 @@ function CustomDrawerContent(props: any) {
             props.navigation.closeDrawer();
             router.push('/(drawer)/about');
           }}
-          activeTintColor="#3b82f6"
-          activeBackgroundColor="#e0f2fe"
-          inactiveTintColor="#000"
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
       </DrawerContentScrollView>
 
       {/* Botón de tema en la parte inferior */}
-      <View style={styles.themeContainer}>
-        <View style={styles.themeSeparator} />
+      <SafeAreaView edges={['bottom']} style={[styles.themeContainer, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={[styles.themeSeparator, { backgroundColor: colors.border }]} />
         <TouchableOpacity 
           style={styles.themeButton}
           onPress={toggleTheme}
@@ -159,7 +149,7 @@ function CustomDrawerContent(props: any) {
               size={24} 
               color={isDarkMode ? "#f59e0b" : "#6366f1"} 
             />
-            <Text style={styles.themeText}>
+            <Text style={[styles.themeText, { color: colors.text }]}>
               {isDarkMode ? "Modo Claro" : "Modo Oscuro"}
             </Text>
           </View>
@@ -167,7 +157,7 @@ function CustomDrawerContent(props: any) {
             <View style={[styles.themeToggle, isDarkMode && styles.themeToggleActive]} />
           </View>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     </View>
   );
 }
@@ -181,21 +171,16 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 1,
-    backgroundColor: '#e5e7eb',
     marginVertical: 10,
     marginHorizontal: 20,
   },
 
   // Botón de tema
   themeContainer: {
-    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingBottom: 20,
   },
   themeSeparator: {
     height: 1,
-    backgroundColor: '#e5e7eb',
   },
   themeButton: {
     flexDirection: 'row',
@@ -212,7 +197,6 @@ const styles = StyleSheet.create({
   themeText: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#1f2937',
   },
   themeIndicator: {
     width: 50,
@@ -242,13 +226,15 @@ const styles = StyleSheet.create({
 });
 
 export default function DrawerLayout() {
+  const colors = useThemeColors();
+  
   return (
     <Drawer
       drawerContent={(props) => <CustomDrawerContent {...props} />}
       screenOptions={{
         headerShown: false,
         drawerStyle: {
-          backgroundColor: '#fff',
+          backgroundColor: colors.card,
           width: 280,
         },
       }}
