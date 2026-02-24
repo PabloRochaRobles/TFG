@@ -4,7 +4,7 @@ import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -19,6 +19,9 @@ export default function SettingsScreen() {
   const [autoAnalysis, setAutoAnalysis] = useState(false);
   const [saveToCloud, setSaveToCloud] = useState(true);
   const [highQuality, setHighQuality] = useState(true);
+  const [supportModalVisible, setSupportModalVisible] = useState(false);
+  const [supportEmail, setSupportEmail] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
 
   const languages = [
     { id: 'Español', name: 'Español', flag: '🇪🇸' },
@@ -29,29 +32,46 @@ export default function SettingsScreen() {
     Alert.alert('Idioma seleccionado', `Has elegido ${langId}`);
   };
 
-  const handleClearCache = () => {
+  const handleDeleteVideos = () => {
     Alert.alert(
-      'Limpiar caché',
-      '¿Estás seguro de que quieres eliminar todos los datos temporales?',
+      'Eliminar videos',
+      '¿Estás seguro de que quieres eliminar todos los videos?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Limpiar', onPress: () => console.log('Caché limpiada'), style: 'destructive' },
+        { text: 'Eliminar', onPress: () => console.log('Videos eliminados'), style: 'destructive' },
       ]
     );
   };
 
-  const handleExportData = () => {
-    Alert.alert('Exportar datos', 'Tus partidas se exportarán en formato PGN');
+  const handleOpenSupportModal = () => {
+    setSupportModalVisible(true);
   };
 
-  const handleDeleteAccount = () => {
+  const handleCloseSupportModal = () => {
+    setSupportModalVisible(false);
+    setSupportEmail('');
+    setSupportMessage('');
+  };
+
+  const handleSendSupport = () => {
+    if (!supportEmail.trim() || !supportMessage.trim()) {
+      Alert.alert('Error', 'Por favor, completa todos los campos');
+      return;
+    }
+
+    // Aquí enviarías los datos al backend
+    console.log('Email:', supportEmail);
+    console.log('Mensaje:', supportMessage);
+
+    // Cerrar modal y mostrar mensaje de éxito
+    setSupportModalVisible(false);
+    setSupportEmail('');
+    setSupportMessage('');
+
     Alert.alert(
-      'Eliminar cuenta',
-      'Esta acción es irreversible. ¿Estás seguro?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', onPress: () => console.log('Cuenta eliminada'), style: 'destructive' },
-      ]
+      'Mensaje enviado',
+      'Gracias por contactar con nosotros. Se le atenderá tan pronto como sea posible.',
+      [{ text: 'OK' }]
     );
   };
 
@@ -129,7 +149,7 @@ export default function SettingsScreen() {
                 <Ionicons name="notifications" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
                   <Text style={[styles.settingTitle, { color: colors.text }]}>Notificaciones push</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Recibe alertas de nuevas partidas</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Recibe alertas de que el análisis esté listo</Text>
                 </View>
               </View>
               <Switch
@@ -160,97 +180,25 @@ export default function SettingsScreen() {
                 thumbColor={autoAnalysis ? '#fff' : '#f3f4f6'}
               />
             </View>
-
-            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="videocam" size={24} color={colors.textSecondary} />
-                <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Calidad de grabación</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Alta calidad (1080p)</Text>
-                </View>
-              </View>
-              <Switch
-                value={highQuality}
-                onValueChange={setHighQuality}
-                trackColor={{ false: '#d1d5db', true: colors.primary }}
-                thumbColor={highQuality ? '#fff' : '#f3f4f6'}
-              />
-            </View>
           </View>
 
           {/* Sección: Almacenamiento */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Almacenamiento y datos</Text>
             
-            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="cloud" size={24} color={colors.textSecondary} />
-                <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Guardar en la nube</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Respaldo automático</Text>
-                </View>
-              </View>
-              <Switch
-                value={saveToCloud}
-                onValueChange={setSaveToCloud}
-                trackColor={{ false: '#d1d5db', true: colors.primary }}
-                thumbColor={saveToCloud ? '#fff' : '#f3f4f6'}
-              />
-            </View>
-
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleClearCache}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleDeleteVideos}>
               <View style={styles.settingLeft}>
                 <Ionicons name="trash-outline" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Limpiar caché</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Liberar espacio (124 MB)</Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleExportData}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="download-outline" size={24} color={colors.textSecondary} />
-                <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Exportar partidas</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Descargar en formato PGN</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>Eliminar todas las partidas</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Borrar todas las partidas guardadas</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
-          {/* Sección: Cuenta */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Cuenta</Text>
-            
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="person-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Editar perfil</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="key-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Cambiar contraseña</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Privacidad y seguridad</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Sección: Ayuda */}
+          {/* Sección: Ayuda y Soporte */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Ayuda y soporte</Text>
             
@@ -262,7 +210,7 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/tips')}>
               <View style={styles.settingLeft}>
                 <Ionicons name="help-circle-outline" size={24} color={colors.textSecondary} />
                 <Text style={[styles.settingTitle, { color: colors.text }]}>Tutorial</Text>
@@ -270,10 +218,21 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+            <TouchableOpacity 
+              style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
+              onPress={handleOpenSupportModal}
+            >
               <View style={styles.settingLeft}>
                 <Ionicons name="mail-outline" size={24} color={colors.textSecondary} />
                 <Text style={[styles.settingTitle, { color: colors.text }]}>Contactar soporte</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+              <View style={styles.settingLeft}>
+                <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
+                <Text style={[styles.settingTitle, { color: colors.text }]}>Privacidad y seguridad</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -287,26 +246,96 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Sección: Peligro */}
-          <View style={styles.section}>
-            <TouchableOpacity 
-              style={[styles.settingItem, styles.dangerItem, { borderBottomColor: colors.border }]} 
-              onPress={handleDeleteAccount}
-            >
-              <View style={styles.settingLeft}>
-                <Ionicons name="warning-outline" size={24} color="#ef4444" />
-                <Text style={[styles.settingTitle, styles.dangerText]}>Eliminar cuenta</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color="#ef4444" />
-            </TouchableOpacity>
-          </View>
-
           {/* Versión */}
           <View style={styles.versionContainer}>
-            <Text style={[styles.versionText, { color: colors.textSecondary }]}>ChessVision v1.0.0</Text>
+            <Text style={[styles.versionText, { color: colors.textSecondary }]}>Chess Analyzer v1.0.0</Text>
             <Text style={[styles.versionSubtext, { color: colors.textSecondary }]}>© 2026 Todos los derechos reservados</Text>
           </View>
         </ScrollView>
+
+        <Modal
+          visible={supportModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={handleCloseSupportModal}
+        >
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalOverlay}
+          >
+            <TouchableOpacity 
+              style={styles.modalBackdrop}
+              activeOpacity={1}
+              onPress={handleCloseSupportModal}
+            />
+            <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+              {/* Header del modal */}
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Contactar soporte</Text>
+                <TouchableOpacity onPress={handleCloseSupportModal} style={styles.closeButton}>
+                  <Ionicons name="close" size={28} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Formulario */}
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                {/* Campo de email */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Tu correo electrónico</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: colors.background, 
+                      color: colors.text,
+                      borderColor: colors.border
+                    }]}
+                    placeholder="ejemplo@correo.com"
+                    placeholderTextColor={colors.textSecondary}
+                    value={supportEmail}
+                    onChangeText={setSupportEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                </View>
+
+                {/* Campo de mensaje */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Mensaje</Text>
+                  <TextInput
+                    style={[styles.textArea, { 
+                      backgroundColor: colors.background, 
+                      color: colors.text,
+                      borderColor: colors.border
+                    }]}
+                    placeholder="Describe tu problema o pregunta..."
+                    placeholderTextColor={colors.textSecondary}
+                    value={supportMessage}
+                    onChangeText={setSupportMessage}
+                    multiline
+                    numberOfLines={6}
+                    textAlignVertical="top"
+                  />
+                </View>
+              </ScrollView>
+
+              {/* Botones */}
+              <View style={styles.modalFooter}>
+                <TouchableOpacity 
+                  style={[styles.modalButton, styles.cancelButton, { borderColor: colors.border }]}
+                  onPress={handleCloseSupportModal}
+                >
+                  <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.modalButton, styles.sendButton, { backgroundColor: colors.primary }]}
+                  onPress={handleSendSupport}
+                >
+                  <Text style={styles.sendButtonText}>Enviar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
       </SafeAreaView>
     </>
   );
@@ -445,4 +474,103 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 5,
   },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  closeButton: {
+    padding: 5,
+  },
+  modalBody: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+  },
+  textArea: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    minHeight: 150,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    borderWidth: 2,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sendButton: {
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  sendButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
 });
+
+function setSupportModalVisible(arg0: boolean) {
+  throw new Error('Function not implemented.');
+}
