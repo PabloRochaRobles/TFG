@@ -79,6 +79,24 @@ class AnalyzeVideoView(APIView):
         except Exception as e:    # Si salta la excepción
             return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Notifica del fallo y status 500
 
+class VideoListView(APIView):
+
+    @staticmethod
+    def get(request):
+        try:
+            video_dir = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
+            if not os.path.exists(video_dir):
+                return Response({'videos': []}, status=status.HTTP_200_OK)
+            files = sorted(
+                [f for f in os.listdir(video_dir) if os.path.isfile(os.path.join(video_dir, f))],
+                key=lambda f: os.path.getmtime(os.path.join(video_dir, f)),
+                reverse=True
+            )
+            return Response({'videos': files}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class VideoStreamView(APIView):
 
     def get(self, request, file_name, *args, **kwargs):

@@ -1,7 +1,7 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
-import { useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { Alert, Clipboard, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -11,6 +11,7 @@ import { useTheme } from '../contexts/ThemeContext';
 export default function AnalysisScreen() {
   const router = useRouter();
   const navigation = useNavigation();
+  const { file } = useLocalSearchParams<{ file: string }>();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
 
