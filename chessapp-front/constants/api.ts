@@ -58,12 +58,12 @@ export async function listVideos(): Promise<string[]> {
 }
 
 export async function deleteVideo(fileName: string): Promise<void> {
-  await fetch(`${API_BASE_URL}/api/partidas/delete/`, {
+  const response = await fetch(`${API_BASE_URL}/api/partidas/delete/${encodeURIComponent(fileName)}/`, {
     method: 'DELETE',
-    headers: {
-      ...HEADERS,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ video_file: fileName }),
+    headers: HEADERS,
   });
+
+  if (!response.ok) {
+    throw new Error('Error al eliminar el vídeo');
+  }
 }

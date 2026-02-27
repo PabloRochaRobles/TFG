@@ -1,61 +1,119 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Ionicons } from '@expo/vector-icons';
+import { DrawerActions } from '@react-navigation/native';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { useNavigation, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useRef, useState } from 'react';
 import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { useThemeColors } from '@/hooks/use-theme-color';
+
 export default function CameraScreen() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const cameraRef = useRef<CameraView>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const router = useRouter();
+  const navigation = useNavigation();
+  const colors = useThemeColors();
 
-  if (!permission) return <View />; // Cargando permisos
+  if (!cameraPermission || !micPermission) return <View />;
 
-  if (!permission.granted) {
+  if (!cameraPermission.granted || !micPermission.granted) {
     return (
-      <View style={styles.permissionContainer}>
-        <Text style={styles.permissionText}>Necesitamos permiso para usar la cámara</Text>
-        <Button onPress={requestPermission} title="Conceder permiso" />
+      <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
+        <Text style={[styles.permissionText, { color: colors.text }]}>
+          Necesitamos acceso a la cámara y al micrófono para grabar vídeo
+        </Text>
+        <Button
+          onPress={async () => {
+            if (!cameraPermission.granted) await requestCameraPermission();
+            if (!micPermission.granted) await requestMicPermission();
+          }}
+          title="Conceder permisos"
+        />
       </View>
     );
   }
 
   const handleRecord = async () => {
-    if (cameraRef.current) {
-      if (isRecording) {
-        cameraRef.current.stopRecording();
-        setIsRecording(false);
-      } else {
-        setIsRecording(true);
-        const video = await cameraRef.current.recordAsync();
-        console.log("Video guardado en:", video?.uri);
+    if (!cameraRef.current) return;
+
+    if (isRecording) {
+      cameraRef.current.stopRecording();
+      setIsRecording(false);
+    } else {
+      setIsRecording(true);
+      const video = await cameraRef.current.recordAsync();
+      setIsRecording(false);
+
+      if (video?.uri) {
+        router.push({
+          pathname: '/(drawer)/(tabs)/upload',
+          params: { cameraUri: video.uri },
+        });
       }
     }
   };
 
   return (
-    <View style={styles.container}>
-      {/* CameraView SIN hijos */}
-      <CameraView style={styles.camera} ref={cameraRef} mode="video" />
-      
-      {/* Controles encima con posición absoluta */}
-      <View style={styles.controlsOverlay}>
-        <TouchableOpacity 
-          onPress={handleRecord}
-          style={[
-            styles.recordButton, 
-            { backgroundColor: isRecording ? 'red' : 'white' }
-          ]} 
-        />
-        {isRecording && (
-          <Text style={styles.recordingText}>● GRABANDO</Text>
-        )}
+    <>
+      <StatusBar style="light" />
+      <View style={styles.container}>
+        {/* Header sobre la cámara */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+          >
+            <Ionicons name="menu" size={30} color="#fff" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Grabar Video</Text>
+        </View>
+
+        <CameraView style={styles.camera} ref={cameraRef} mode="video" />
+
+        {/* Controles */}
+        <View style={styles.controlsOverlay}>
+          {isRecording && (
+            <Text style={styles.recordingText}>● GRABANDO</Text>
+          )}
+          <TouchableOpacity
+            onPress={handleRecord}
+            style={[styles.recordButton, { backgroundColor: isRecording ? 'red' : 'white' }]}
+          />
+          <Text style={styles.hint}>
+            {isRecording ? 'Toca para detener' : 'Toca para grabar'}
+          </Text>
+        </View>
       </View>
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
+  },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 50,
+    paddingBottom: 12,
+    paddingHorizontal: 15,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  menuButton: { marginRight: 15 },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
   },
   camera: {
     flex: 1,
@@ -78,7 +136,7 @@ const styles = StyleSheet.create({
     right: 0,
     paddingBottom: 50,
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   recordButton: {
     width: 70,
@@ -95,5 +153,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 5,
     borderRadius: 15,
+  },
+  hint: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
   },
 });

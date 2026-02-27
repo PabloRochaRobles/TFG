@@ -1,12 +1,15 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { analyzeVideo } from '@/constants/api';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
-import { Alert, Clipboard, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Clipboard, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
+
+type Phase = 'analyzing' | 'done' | 'error';
 
 export default function AnalysisScreen() {
   const router = useRouter();
@@ -15,272 +18,214 @@ export default function AnalysisScreen() {
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
 
-  // Estado del análisis (mock data - reemplazar con backend)
-  const totalMoves = 42;
+  const [phase, setPhase] = useState<Phase>('analyzing');
+  const [totalFrames, setTotalFrames] = useState<number>(0);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [currentMove, setCurrentMove] = useState(0);
-  
-  const fenPosition = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-  
-  const topMoves = [
-    { move: 'e4', evaluation: '+0.3', engines: ['Stockfish', 'Obsidian', 'Plentychess'] },
-    { move: 'd4', evaluation: '+0.2', engines: ['Stockfish', 'Obsidian'] },
-    { move: 'Nf3', evaluation: '+0.1', engines: ['Stockfish', 'Plentychess'] },
-    { move: 'c4', evaluation: '0.0', engines: ['Obsidian'] },
-    { move: 'g3', evaluation: '-0.1', engines: ['Plentychess'] },
-  ];
 
-  const playedMove = 'e4';
+  useEffect(() => {
+    if (file) runAnalysis();
+  }, [file]);
 
-  const goToStart = () => {
-    setCurrentMove(0);
-  };
-
-  const goToPrevious = () => {
-    if (currentMove > 0) {
-      setCurrentMove(currentMove - 1);
+  const runAnalysis = async () => {
+    try {
+      setPhase('analyzing');
+      const result = await analyzeVideo(file as string);
+      setTotalFrames(result.total_frames);
+      setAnalysisId(result.analisis_id);
+      setPhase('done');
+    } catch (err: any) {
+      setPhase('error');
     }
   };
 
-  const goToNext = () => {
-    if (currentMove < totalMoves) {
-      setCurrentMove(currentMove + 1);
-    }
-  };
-
-  const goToEnd = () => {
-    setCurrentMove(totalMoves);
-  };
-
-  const copyFEN = () => {
-    Clipboard.setString(fenPosition);
-    Alert.alert('Copiado', 'Posición FEN copiada al portapapeles');
+  const copyAnalysisId = () => {
+    if (!analysisId) return;
+    Clipboard.setString(analysisId);
+    Alert.alert('Copiado', 'ID de análisis copiado al portapapeles');
   };
 
   return (
     <>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
+
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.headerText }]}>Análisis de Partida</Text>
-          <TouchableOpacity 
-            style={styles.closeButton}
-            onPress={() => router.back()}
-          >
+          <TouchableOpacity style={styles.closeButton} onPress={() => router.back()}>
             <Ionicons name="close" size={30} color={colors.headerText} />
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
-          {/* Información de movimiento actual */}
-          <View style={[styles.moveInfo, { backgroundColor: colors.card }]}>
-            <Text style={[styles.moveNumber, { color: colors.text }]}>
-              Movimiento {currentMove} de {totalMoves}
+        <ScrollView
+          style={[styles.scrollView, { backgroundColor: colors.background }]}
+          contentContainerStyle={styles.content}
+        >
+          {/* Nombre del fichero */}
+          <View style={[styles.fileInfo, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Ionicons name="film-outline" size={18} color={colors.textSecondary} />
+            <Text style={[styles.fileName, { color: colors.textSecondary }]} numberOfLines={1}>
+              {file ?? 'Sin fichero'}
             </Text>
-            {currentMove > 0 && (
-              <View style={styles.playedMoveContainer}>
-                <Text style={[styles.playedMoveLabel, { color: colors.textSecondary }]}>Jugado:</Text>
-                <Text style={[styles.playedMove, { color: colors.primary }]}>{playedMove}</Text>
-              </View>
-            )}
           </View>
 
-          {/* Tablero de ajedrez (placeholder) */}
-          <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
-            <View style={styles.chessBoard}>
-              {[...Array(8)].map((_, row) => (
-                <View key={row} style={styles.boardRow}>
-                  {[...Array(8)].map((_, col) => {
-                    const isLight = (row + col) % 2 === 0;
-                    return (
-                      <View
-                        key={col}
-                        style={[
-                          styles.square,
-                          isLight ? styles.lightSquare : styles.darkSquare,
-                        ]}
-                      >
-                        {row === 0 && col === 0 && (
-                          <Text style={styles.piece}>♜</Text>
-                        )}
-                        {row === 0 && col === 4 && (
-                          <Text style={styles.piece}>♚</Text>
-                        )}
-                        {row === 7 && col === 0 && (
-                          <Text style={styles.piece}>♖</Text>
-                        )}
-                        {row === 7 && col === 4 && (
-                          <Text style={styles.piece}>♔</Text>
-                        )}
-                      </View>
-                    );
-                  })}
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* Controles de navegación */}
-          <View style={[styles.controls, { backgroundColor: colors.card }]}>
-            <TouchableOpacity
-              style={[
-                styles.controlButton,
-                { backgroundColor: colors.primaryLight, borderColor: colors.primary },
-                currentMove === 0 && styles.controlButtonDisabled
-              ]}
-              onPress={goToStart}
-              disabled={currentMove === 0}
-            >
-              <Ionicons 
-                name="play-skip-back" 
-                size={24} 
-                color={currentMove === 0 ? colors.textSecondary : colors.primary} 
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.controlButton,
-                { backgroundColor: colors.primaryLight, borderColor: colors.primary },
-                currentMove === 0 && styles.controlButtonDisabled
-              ]}
-              onPress={goToPrevious}
-              disabled={currentMove === 0}
-            >
-              <Ionicons 
-                name="chevron-back" 
-                size={28} 
-                color={currentMove === 0 ? colors.textSecondary : colors.primary} 
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.controlButton,
-                { backgroundColor: colors.primaryLight, borderColor: colors.primary },
-                currentMove === totalMoves && styles.controlButtonDisabled
-              ]}
-              onPress={goToNext}
-              disabled={currentMove === totalMoves}
-            >
-              <Ionicons 
-                name="chevron-forward" 
-                size={28} 
-                color={currentMove === totalMoves ? colors.textSecondary : colors.primary} 
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.controlButton,
-                { backgroundColor: colors.primaryLight, borderColor: colors.primary },
-                currentMove === totalMoves && styles.controlButtonDisabled
-              ]}
-              onPress={goToEnd}
-              disabled={currentMove === totalMoves}
-            >
-              <Ionicons 
-                name="play-skip-forward" 
-                size={24} 
-                color={currentMove === totalMoves ? colors.textSecondary : colors.primary} 
-              />
-            </TouchableOpacity>
-          </View>
-
-          {/* Posición FEN */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Posición FEN</Text>
-              <TouchableOpacity style={[styles.copyButton, { backgroundColor: colors.primaryLight }]} onPress={copyFEN}>
-                <Ionicons name="copy-outline" size={20} color={colors.primary} />
-                <Text style={[styles.copyButtonText, { color: colors.primary }]}>Copiar</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={[styles.fenContainer, { backgroundColor: colors.card }]}>
-              <Text style={[styles.fenText, { color: colors.textSecondary }]} numberOfLines={2}>
-                {fenPosition}
+          {/* ── Estado: analizando ── */}
+          {phase === 'analyzing' && (
+            <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.statusTitle, { color: colors.text }]}>Analizando partida...</Text>
+              <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                Extrayendo posiciones clave del vídeo
               </Text>
             </View>
-          </View>
+          )}
 
-          {/* Top 5 mejores movimientos */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Mejores movimientos (consenso de motores)</Text>
-            <View style={styles.movesContainer}>
-              {topMoves.map((moveData, index) => (
-                <View key={index} style={[styles.moveCard, { backgroundColor: colors.card }]}>
-                  <View style={[styles.moveRank, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.moveRankText}>#{index + 1}</Text>
+          {/* ── Estado: error ── */}
+          {phase === 'error' && (
+            <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
+              <Ionicons name="alert-circle-outline" size={52} color="#ef4444" />
+              <Text style={[styles.statusTitle, { color: colors.text }]}>Error en el análisis</Text>
+              <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                No se ha podido procesar el vídeo
+              </Text>
+              <TouchableOpacity
+                style={[styles.retryButton, { backgroundColor: colors.buttonBg }]}
+                onPress={runAnalysis}
+              >
+                <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>Reintentar</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Estado: completado ── */}
+          {phase === 'done' && (
+            <>
+              {/* Resultado */}
+              <View style={[styles.resultBox, { backgroundColor: colors.card }]}>
+                <View style={styles.resultRow}>
+                  <Ionicons name="checkmark-circle" size={26} color="#22c55e" />
+                  <Text style={[styles.resultTitle, { color: colors.text }]}>Análisis completado</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Posiciones detectadas:</Text>
+                  <Text style={[styles.statValue, { color: colors.primary }]}>{totalFrames}</Text>
+                </View>
+                {analysisId && (
+                  <TouchableOpacity style={styles.statRow} onPress={copyAnalysisId}>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>ID de análisis:</Text>
+                    <Text
+                      style={[styles.statValue, { color: colors.textSecondary, fontSize: 12, flex: 1, textAlign: 'right' }]}
+                      numberOfLines={1}
+                    >
+                      {analysisId}
+                    </Text>
+                    <Ionicons name="copy-outline" size={14} color={colors.textSecondary} style={{ marginLeft: 6 }} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Tablero de ajedrez (placeholder) */}
+              <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
+                <View style={styles.chessBoard}>
+                  {[...Array(8)].map((_, row) => (
+                    <View key={row} style={styles.boardRow}>
+                      {[...Array(8)].map((_, col) => {
+                        const isLight = (row + col) % 2 === 0;
+                        return (
+                          <View
+                            key={col}
+                            style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}
+                          />
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
+                <Text style={[styles.boardCaption, { color: colors.textSecondary }]}>
+                  Tablero interactivo — próximamente
+                </Text>
+              </View>
+
+              {/* Navegación de movimientos */}
+              <View style={[styles.controls, { backgroundColor: colors.card }]}>
+                <TouchableOpacity
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(0)}
+                  disabled={currentMove === 0}
+                >
+                  <Ionicons name="play-skip-back" size={22} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(c => Math.max(0, c - 1))}
+                  disabled={currentMove === 0}
+                >
+                  <Ionicons name="chevron-back" size={26} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
+                </TouchableOpacity>
+                <View style={[styles.moveCountBadge, { backgroundColor: colors.primaryLight }]}>
+                  <Text style={[styles.moveCountText, { color: colors.primary }]}>
+                    {currentMove} / {totalFrames}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === totalFrames && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(c => Math.min(totalFrames, c + 1))}
+                  disabled={currentMove === totalFrames}
+                >
+                  <Ionicons name="chevron-forward" size={26} color={currentMove === totalFrames ? colors.textSecondary : colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === totalFrames && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(totalFrames)}
+                  disabled={currentMove === totalFrames}
+                >
+                  <Ionicons name="play-skip-forward" size={22} color={currentMove === totalFrames ? colors.textSecondary : colors.primary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Análisis de motores — pendiente */}
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                  Análisis de jugadas (motores)
+                </Text>
+                <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <FontAwesome5 name="chess-knight" size={32} color={colors.textSecondary} />
+                  <Text style={[styles.pendingTitle, { color: colors.text }]}>Próximamente</Text>
+                  <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                    El análisis de jugadas con Stockfish, Obsidian y PlentyChess estará disponible
+                    en cuanto se integre el reconocimiento de posiciones FEN desde las imágenes.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Leyenda de motores */}
+              <View style={[styles.legend, { backgroundColor: colors.card }]}>
+                <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>Motores de análisis:</Text>
+                <View style={styles.legendItems}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
+                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>Stockfish 16</Text>
                   </View>
-                  
-                  <View style={styles.moveDetails}>
-                    <View style={styles.moveHeader}>
-                      <Text style={[styles.moveNotation, { color: colors.text }]}>{moveData.move}</Text>
-                      <View style={[
-                        styles.evaluationBadge,
-                        moveData.evaluation.startsWith('+') 
-                          ? styles.positiveEval 
-                          : moveData.evaluation.startsWith('-')
-                          ? styles.negativeEval
-                          : styles.neutralEval
-                      ]}>
-                        <Text style={[styles.evaluationText, { color: colors.text }]}>{moveData.evaluation}</Text>
-                      </View>
-                    </View>
-                    
-                    <View style={styles.enginesContainer}>
-                      {moveData.engines.map((engine, idx) => (
-                        <View key={idx} style={[styles.engineBadge, { backgroundColor: isDarkMode ? '#374151' : '#f9fafb' }]}>
-                          <FontAwesome5 name="chess-knight" size={10} color={colors.textSecondary} />
-                          <Text style={[styles.engineText, { color: colors.textSecondary }]}>{engine}</Text>
-                        </View>
-                      ))}
-                    </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
+                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>Obsidian</Text>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>PlentyChess</Text>
                   </View>
                 </View>
-              ))}
-            </View>
-          </View>
-
-          {/* Leyenda de motores */}
-          <View style={[styles.legend, { backgroundColor: colors.card }]}>
-            <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>Motores de análisis:</Text>
-            <View style={styles.legendItems}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
-                <Text style={[styles.legendText, { color: colors.textSecondary }]}>Stockfish 16</Text>
               </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
-                <Text style={[styles.legendText, { color: colors.textSecondary }]}>Obsidian</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-                <Text style={[styles.legendText, { color: colors.textSecondary }]}>Plentychess</Text>
-              </View>
-            </View>
-          </View>
+            </>
+          )}
 
-          {/* Acciones adicionales */}
-          <View style={styles.actions}>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.card, borderColor: colors.primary }]}>
-              <Ionicons name="download-outline" size={22} color={colors.primary} />
-              <Text style={[styles.actionButtonText, { color: colors.primary }]}>Exportar PGN</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.card, borderColor: colors.primary }]}>
-              <Ionicons name="share-social-outline" size={22} color={colors.primary} />
-              <Text style={[styles.actionButtonText, { color: colors.primary }]}>Compartir</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Espacio inferior */}
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -289,9 +234,7 @@ export default function AnalysisScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1,
-  },
+  container: { flex: 1 },
   header: {
     height: 60,
     flexDirection: 'row',
@@ -299,56 +242,81 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 15,
   },
-  menuButton: { 
-    padding: 5,
-  },
-  closeButton: {
-    padding: 5,
-  },
-  headerTitle: { 
-    fontSize: 20, 
+  menuButton: { padding: 5 },
+  closeButton: { padding: 5 },
+  headerTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
     flex: 1,
     textAlign: 'center',
   },
-  scrollView: {
-    flex: 1,
-  },
+  scrollView: { flex: 1 },
   content: {
     paddingTop: 20,
     paddingHorizontal: 20,
   },
 
-  // Info de movimiento
-  moveInfo: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+  // Fichero
+  fileInfo: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 16,
+  },
+  fileName: { fontSize: 13, flex: 1 },
+
+  // Estado
+  statusBox: {
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 20,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  moveNumber: {
-    fontSize: 16,
-    fontWeight: '600',
+  statusTitle: { fontSize: 18, fontWeight: 'bold' },
+  statusSub: { fontSize: 14, textAlign: 'center' },
+  retryButton: {
+    marginTop: 8,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 12,
   },
-  playedMoveContainer: {
+  retryButtonText: { fontSize: 16, fontWeight: 'bold' },
+
+  // Resultado
+  resultBox: {
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    gap: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  resultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
-  playedMoveLabel: {
-    fontSize: 14,
+  resultTitle: { fontSize: 17, fontWeight: 'bold' },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  playedMove: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
+  statLabel: { fontSize: 14 },
+  statValue: { fontSize: 16, fontWeight: 'bold' },
 
   // Tablero
   boardContainer: {
@@ -360,38 +328,29 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3.84,
+    alignItems: 'center',
+    gap: 10,
   },
   chessBoard: {
+    width: '100%',
     aspectRatio: 1,
     borderWidth: 2,
     borderColor: '#4b5563',
     borderRadius: 8,
     overflow: 'hidden',
   },
-  boardRow: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  square: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  lightSquare: {
-    backgroundColor: '#f0d9b5',
-  },
-  darkSquare: {
-    backgroundColor: '#b58863',
-  },
-  piece: {
-    fontSize: 32,
-  },
+  boardRow: { flex: 1, flexDirection: 'row' },
+  square: { flex: 1 },
+  lightSquare: { backgroundColor: '#f0d9b5' },
+  darkSquare: { backgroundColor: '#b58863' },
+  boardCaption: { fontSize: 12 },
 
   // Controles
   controls: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 20,
+    alignItems: 'center',
+    gap: 12,
     marginBottom: 20,
     borderRadius: 12,
     padding: 16,
@@ -402,136 +361,35 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   controlButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
   },
-  controlButtonDisabled: {
-    opacity: 0.4,
+  controlButtonDisabled: { opacity: 0.4 },
+  moveCountBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
+  moveCountText: { fontSize: 14, fontWeight: '700' },
 
   // Secciones
-  section: {
-    marginBottom: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
+  section: { marginBottom: 20 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
 
-  // FEN
-  copyButton: {
-    flexDirection: 'row',
+  // Pendiente
+  pendingBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 24,
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  copyButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  fenContainer: {
-    borderRadius: 12,
-    padding: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  fenText: {
-    fontSize: 13,
-    fontFamily: 'monospace',
-    lineHeight: 20,
-  },
-
-  // Mejores movimientos
-  movesContainer: {
     gap: 12,
   },
-  moveCard: {
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  moveRank: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  moveRankText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  moveDetails: {
-    flex: 1,
-  },
-  moveHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  moveNotation: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  evaluationBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  positiveEval: {
-    backgroundColor: '#d1fae5',
-  },
-  negativeEval: {
-    backgroundColor: '#fee2e2',
-  },
-  neutralEval: {
-    backgroundColor: '#f3f4f6',
-  },
-  evaluationText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  enginesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  engineBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 4,
-  },
-  engineText: {
-    fontSize: 11,
-    fontWeight: '500',
-  },
+  pendingTitle: { fontSize: 16, fontWeight: 'bold' },
+  pendingDesc: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
   // Leyenda
   legend: {
@@ -544,47 +402,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  legendTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
-  legendItems: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  legendText: {
-    fontSize: 13,
-  },
-
-  // Acciones
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
-    borderWidth: 2,
-  },
-  actionButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  legendTitle: { fontSize: 14, fontWeight: '600', marginBottom: 10 },
+  legendItems: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 12, height: 12, borderRadius: 6 },
+  legendText: { fontSize: 13 },
 });

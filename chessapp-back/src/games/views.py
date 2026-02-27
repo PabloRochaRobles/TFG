@@ -13,7 +13,11 @@ import uuid
 from .serializers import VideoUploadSerializer
 from django.conf import settings
 
-from .services import extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames, get_corners
+import chess
+from .services import (
+    extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames, get_corners,
+    analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
+)
 
 fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
 fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_frames'))
@@ -116,16 +120,78 @@ class VideoStreamView(APIView):
         except Exception as e:
             return Response({'error': f"Fallo en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class AnalysisChainView(APIView):
+
+    # POST: Recibe una lista de FENs y devuelve, para cada uno, la cadena de los N mejores movimientos por consenso
+    @staticmethod
+    def post(request):
+        fens  = request.data.get('fens', [])
+        depth = int(request.data.get('depth', 5))
+
+        if not fens:
+            return Response({'error': 'No se han proporcionado posiciones FEN.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Acepta tanto una lista como una cadena con un único FEN
+        if isinstance(fens, str):
+            fens = [fens]
+
+        results = []
+
+        for fen in fens:
+            chain = []
+            current_fen = fen.strip()
+
+            # Validar FEN
+            try:
+                chess.Board(current_fen)
+            except ValueError:
+                results.append({'initial_fen': fen, 'error': f'FEN no válido: {fen}'})
+                continue
+
+            for step in range(1, depth + 1):
+                try:
+                    stock   = analysis_best_posStockfish(current_fen)
+                    obsidian = analysis_best_posObsidian(current_fen)
+                    plenty  = analysis_best_posPlentyChess(current_fen)
+
+                    agree = (stock['movement_uci'] == obsidian['movement_uci'] == plenty['movement_uci'])
+
+                    consensus = consensus_analysis(stock, obsidian, plenty, current_fen)
+
+                    chain.append({
+                        'step': step,
+                        'fen_before': current_fen,
+                        'consensus_san': consensus['movement_san'],
+                        'consensus_uci': consensus['movement_uci'],
+                        'fen_after': consensus['new_fen'],
+                        'full_agreement': agree,
+                        'engines': {
+                            'stockfish':   {'san': stock['movement_san'],   'uci': stock['movement_uci'],   'score': stock['score']},
+                            'obsidian':    {'san': obsidian['movement_san'], 'uci': obsidian['movement_uci'], 'score': obsidian['score']},
+                            'plentychess': {'san': plenty['movement_san'],  'uci': plenty['movement_uci'],  'score': plenty['score']},
+                        },
+                    })
+
+                    current_fen = consensus['new_fen']
+
+                except Exception as e:
+                    chain.append({'step': step, 'error': str(e)})
+                    break
+
+            results.append({'initial_fen': fen.strip(), 'chain': chain})
+
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
-def delete_video_and_frames(request):
-    saved_file_name = request.data.get('video_file')                                                                       # Extracción del nombre del video recibido como parametro desde la petición.
+def delete_video_and_frames(request, file_name):
+    if not file_name:                                                                                                    # Si no existe ese video:
+        return Response({"error": "No se ha proporcionado el nombre del video."}, status=status.HTTP_400_BAD_REQUEST)   # Devuelve error y status 400 BAD REQUEST
 
-    if not saved_file_name:                                                                                             # Si no existe ese video:
-        return Response({"error: No se ha proporcionado el nombre del video."}, status=status.HTTP_400_BAD_REQUEST)             # Devuelve error y status 400 BAD REQUEST
-    ok = delete_temporary_videos(saved_file_name)                                                                       # Ejecuta la función de borrado de video
+    ok = delete_temporary_videos(file_name)                                                                             # Ejecuta la función de borrado de video
 
     if ok:                                                                                                              # Si la ejecución de borrado de video se ha completado:
-        delete_key_frames(os.path.splitext(saved_file_name)[0])                                                             # Borramos los frames claves asociados (si los tuviera creados)
+        delete_key_frames(os.path.splitext(file_name)[0])                                                               # Borramos los frames claves asociados (si los tuviera creados)
 
     return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200

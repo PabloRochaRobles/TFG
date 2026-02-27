@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useState } from 'react';
@@ -21,11 +21,22 @@ export default function UploadScreen() {
   const [phase, setPhase] = useState<Phase>('idle');
   const navigation = useNavigation();
   const router = useRouter();
+  const { cameraUri } = useLocalSearchParams<{ cameraUri?: string }>();
 
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
 
   const player = useVideoPlayer('', (p) => { p.loop = true; });
+
+  // Carga el vídeo grabado con la cámara cuando llega como parámetro
+  useEffect(() => {
+    if (cameraUri) {
+      setVideoUri(cameraUri);
+      setVideoFileName('grabacion.mp4');
+      setSavedFileName(null);
+      setPhase('idle');
+    }
+  }, [cameraUri]);
 
   useEffect(() => {
     if (videoUri) {
