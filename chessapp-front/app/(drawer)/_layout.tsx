@@ -1,17 +1,25 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { useRouter } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
+import { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LANGUAGES, useLanguage } from '../contexts/LanguageContext';
 import { useTheme } from '../contexts/ThemeContext';
 
 function CustomDrawerContent(props: any) {
   const router = useRouter();
   const { isDarkMode, toggleTheme } = useTheme();
+  const { language, setLanguage } = useLanguage();
   const colors = useThemeColors();
-  
+  const t = useTranslation();
+  const [langExpanded, setLangExpanded] = useState(false);
+
+  const currentLang = LANGUAGES.find((l) => l.id === language) ?? LANGUAGES[0];
+
   const DrawerSeparator = () => (
     <View style={[styles.separator, { backgroundColor: colors.border }]} />
   );
@@ -35,9 +43,9 @@ function CustomDrawerContent(props: any) {
         />
 
         <DrawerSeparator />
-        
+
         <DrawerItem
-          label="Inicio"
+          label={t.drawer.home}
           icon={({ color, size }) => (
             <FontAwesome name="home" size={size} color={color} />
           )}
@@ -53,7 +61,7 @@ function CustomDrawerContent(props: any) {
         />
 
         <DrawerItem
-          label="Subir video"
+          label={t.drawer.uploadVideo}
           icon={({ color, size }) => (
             <FontAwesome name="upload" size={size} color={color} />
           )}
@@ -67,9 +75,9 @@ function CustomDrawerContent(props: any) {
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
-        
+
         <DrawerItem
-          label="Grabar video"
+          label={t.drawer.recordVideo}
           icon={({ color, size }) => (
             <FontAwesome name="camera" size={size} color={color} />
           )}
@@ -83,9 +91,9 @@ function CustomDrawerContent(props: any) {
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
-        
+
         <DrawerItem
-          label="Mi librería"
+          label={t.drawer.myLibrary}
           icon={({ color, size }) => (
             <FontAwesome name="bookmark" size={size} color={color} />
           )}
@@ -103,7 +111,7 @@ function CustomDrawerContent(props: any) {
         <DrawerSeparator />
 
         <DrawerItem
-          label="Ajustes"
+          label={t.drawer.settings}
           icon={({ color, size }) => (
             <Ionicons name="settings" size={size} color={color} />
           )}
@@ -117,9 +125,9 @@ function CustomDrawerContent(props: any) {
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
-        
+
         <DrawerItem
-          label="Acerca de"
+          label={t.drawer.about}
           icon={({ color, size }) => (
             <Ionicons name="information-circle" size={size} color={color} />
           )}
@@ -135,22 +143,70 @@ function CustomDrawerContent(props: any) {
         />
       </DrawerContentScrollView>
 
-      {/* Botón de tema en la parte inferior */}
-      <SafeAreaView edges={['bottom']} style={[styles.themeContainer, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-        <View style={[styles.themeSeparator, { backgroundColor: colors.border }]} />
-        <TouchableOpacity 
+      {/* Controles inferiores: idioma y tema */}
+      <SafeAreaView edges={['bottom']} style={[styles.bottomContainer, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={[styles.bottomSeparator, { backgroundColor: colors.border }]} />
+
+        {/* Selector de idioma */}
+        <TouchableOpacity
+          style={styles.langButton}
+          onPress={() => setLangExpanded(!langExpanded)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.langContent}>
+            <Text style={styles.langFlag}>{currentLang.flag}</Text>
+            <Text style={[styles.langText, { color: colors.text }]}>{t.drawer.language}</Text>
+          </View>
+          <Ionicons
+            name={langExpanded ? 'chevron-up' : 'chevron-down'}
+            size={20}
+            color={colors.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {/* Opciones de idioma desplegables */}
+        {langExpanded && (
+          <View style={[styles.langOptions, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            {LANGUAGES.map((lang, index) => (
+              <TouchableOpacity
+                key={lang.id}
+                style={[
+                  styles.langOption,
+                  { borderBottomColor: colors.border },
+                  index === LANGUAGES.length - 1 && styles.langOptionLast,
+                ]}
+                onPress={() => {
+                  setLanguage(lang.id);
+                  setLangExpanded(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.langOptionFlag}>{lang.flag}</Text>
+                <Text style={[styles.langOptionName, { color: colors.text }]}>{lang.name}</Text>
+                {language === lang.id && (
+                  <Ionicons name="checkmark" size={20} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        <View style={[styles.bottomSeparator, { backgroundColor: colors.border }]} />
+
+        {/* Botón de tema */}
+        <TouchableOpacity
           style={styles.themeButton}
           onPress={toggleTheme}
           activeOpacity={0.7}
         >
           <View style={styles.themeContent}>
-            <Ionicons 
-              name={isDarkMode ? "sunny" : "moon"} 
-              size={24} 
-              color={isDarkMode ? "#f59e0b" : "#6366f1"} 
+            <Ionicons
+              name={isDarkMode ? 'sunny' : 'moon'}
+              size={24}
+              color={isDarkMode ? '#f59e0b' : '#6366f1'}
             />
             <Text style={[styles.themeText, { color: colors.text }]}>
-              {isDarkMode ? "Modo Claro" : "Modo Oscuro"}
+              {isDarkMode ? t.drawer.lightMode : t.drawer.darkMode}
             </Text>
           </View>
           <View style={[styles.themeIndicator, isDarkMode && styles.themeIndicatorActive]}>
@@ -175,13 +231,59 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
   },
 
-  // Botón de tema
-  themeContainer: {
+  // Contenedor inferior
+  bottomContainer: {
     borderTopWidth: 1,
   },
-  themeSeparator: {
+  bottomSeparator: {
     height: 1,
   },
+
+  // Selector de idioma
+  langButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  langContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  langFlag: {
+    fontSize: 20,
+  },
+  langText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  langOptions: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+  },
+  langOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 28,
+    gap: 14,
+    borderBottomWidth: 1,
+  },
+  langOptionLast: {
+    borderBottomWidth: 0,
+  },
+  langOptionFlag: {
+    fontSize: 22,
+  },
+  langOptionName: {
+    fontSize: 15,
+    fontWeight: '500',
+    flex: 1,
+  },
+
+  // Botón de tema
   themeButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -227,7 +329,7 @@ const styles = StyleSheet.create({
 
 export default function DrawerLayout() {
   const colors = useThemeColors();
-  
+
   return (
     <Drawer
       drawerContent={(props) => <CustomDrawerContent {...props} />}

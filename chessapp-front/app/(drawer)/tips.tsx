@@ -1,4 +1,5 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
@@ -13,6 +14,7 @@ export default function TipsScreen() {
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
   const router = useRouter();
+  const t = useTranslation();
 
   return (
     <>
@@ -25,7 +27,7 @@ export default function TipsScreen() {
           >
             <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Consejos para la grabación</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.tips.title}</Text>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
@@ -38,31 +40,23 @@ export default function TipsScreen() {
           {/* Pasos / Instrucciones */}
           <View style={styles.stepsContainer}>
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 1:</Text>
-              <Text style={[styles.stepDescription, { color: colors.text }]}>
-                Asegúrate que la grabación se realiza en un entorno bien iluminado y evita luces directas que creen reflejos sobre el tablero
-              </Text>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip1Label}</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip1}</Text>
             </View>
 
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 2:</Text>
-              <Text style={[styles.stepDescription, { color: colors.text }]}>
-                Mantén la estabilidad de la grabación. Usar un tripode o un soporte previene los movimientos de la cámara
-              </Text>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip2Label}</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip2}</Text>
             </View>
 
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 3:</Text>
-              <Text style={[styles.stepDescription, { color: colors.text }]}>
-                Coloca la cámara desde una posición frontal y elevada que permita diferenciar claramente las piezas del tablero.
-              </Text>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip3Label}</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip3}</Text>
             </View>
 
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.stepTitle, { color: colors.text }]}>Consejo 4:</Text>
-              <Text style={[styles.stepDescription, { color: colors.text }]}>
-                Mantenga las manos fuera del encuadre y realice movimientos claros.
-              </Text>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip4Label}</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip4}</Text>
             </View>
           </View>
         </ScrollView>

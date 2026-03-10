@@ -1,4 +1,5 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -12,8 +13,9 @@ import { useTheme } from '../../contexts/ThemeContext';
 export default function HomeScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const colors = useThemeColors(); 
-  const { isDarkMode } = useTheme(); 
+  const colors = useThemeColors();
+  const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   // Datos de ejemplo (mock data) - Reemplazar con datos del backend
   const lastGame = {
@@ -40,7 +42,7 @@ export default function HomeScreen() {
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Inicio</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.home.title}</Text>
         </View>
 
         <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
@@ -54,7 +56,7 @@ export default function HomeScreen() {
             />
             <View style={styles.buttonContent}>
               <FontAwesome5 name="chess" size={45} color="white" />
-              <Text style={styles.buttonText}>Analizar una nueva partida</Text>
+              <Text style={styles.buttonText}>{t.home.analyzeNewGame}</Text>
             </View>
           </TouchableOpacity>
 
@@ -65,14 +67,14 @@ export default function HomeScreen() {
           >
             <View style={styles.buttonContent}>
               <FontAwesome name="exclamation-circle" size={45} color="white" />
-              <Text style={styles.buttonText}>Consejos para la grabación de partidas</Text>
+              <Text style={styles.buttonText}>{t.home.recordingTips}</Text>
             </View>
           </TouchableOpacity>
 
           {/* Sección: Última partida */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              Última partida analizada
+              {t.home.lastGame}
             </Text>
             
             {lastGame ? (
@@ -104,13 +106,13 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.infoRow}>
                     <FontAwesome5 name="chess-knight" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.infoText, { color: colors.textSecondary }]}>{lastGame.moves} movimientos</Text>
+                    <Text style={[styles.infoText, { color: colors.textSecondary }]}>{lastGame.moves} {t.home.moves}</Text>
                   </View>
                 </View>
 
                 {/* Indicador de tap para ver */}
                 <View style={[styles.tapIndicator, { backgroundColor: colors.primaryLight }]}>
-                  <Text style={[styles.tapText, { color: colors.primary }]}>Toca para ver el análisis</Text>
+                  <Text style={[styles.tapText, { color: colors.primary }]}>{t.home.tapToView}</Text>
                   <Ionicons name="arrow-forward" size={16} color={colors.primary} />
                 </View>
               </TouchableOpacity>
@@ -118,13 +120,13 @@ export default function HomeScreen() {
               <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
                 <Ionicons name="cloud-upload-outline" size={60} color={colors.textSecondary} />
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  Aún no has subido ninguna partida
+                  {t.home.noGamesYet}
                 </Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.emptyButton, { backgroundColor: colors.primary }]}
                   onPress={() => router.push('/upload')}
                 >
-                  <Text style={styles.emptyButtonText}>Subir primera partida</Text>
+                  <Text style={styles.emptyButtonText}>{t.home.uploadFirst}</Text>
                 </TouchableOpacity>
               </View>
             )}

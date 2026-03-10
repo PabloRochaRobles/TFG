@@ -24,20 +24,22 @@ VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 
 # Función de borrado de los videos obtenidos del FrontEnd y almacenados.
 def delete_temporary_videos(file_name):
-    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar                                            # Si la ruta hasta el video existe
+    file_path = os.path.join(TEMP_VIDEOS_LOCATION, file_name)                   # Almacena en la variable la ruta hasta el archivo que se quiere borrar
+    print(f"[DELETE] Buscando archivo en: {file_path}")
+    print(f"[DELETE] Archivo existe: {os.path.exists(file_path)}")
     try:
         if os.path.exists(file_path):                                           # Si el archivo existe:
             os.remove(file_path)                                                    # Se elimina el video especificado por la ruta
-            print(f"El video {file_name} ha sido eliminado")                        # Se notifica que el video ha sido eliminado
+            print(f"[DELETE] El video {file_name} ha sido eliminado")               # Se notifica que el video ha sido eliminado
             return True                                                             # Devuelve verdadero
 
         else:                                                                   # Si no existe:
-            return Response({"error: No se ha encontrado el video"},
-                            status=status.HTTP_400_BAD_REQUEST)                     # Se notifica del fallo y devuelve 400 BAD REQUEST
+            print(f"[DELETE] Archivo no encontrado: {file_path}")
+            return False                                                             # Devuelve falso
 
     except Exception as e:                                                      # Si algo falla, salta la excepción
-        return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)                   # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
+        print(f"[DELETE] Excepción al borrar: {str(e)}")
+        return False                                                                 # Devuelve falso
 
 # Función de apertura del video de ajedrez
 def open_video(video_path):

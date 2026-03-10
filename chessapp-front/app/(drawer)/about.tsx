@@ -1,4 +1,5 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
@@ -12,6 +13,7 @@ export default function AboutScreen() {
   const navigation = useNavigation();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   const appVersion = '1.0.0';
   const buildNumber = '2026.02.15';
@@ -55,7 +57,7 @@ export default function AboutScreen() {
           >
             <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Acerca de</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.about.title}</Text>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
@@ -71,41 +73,41 @@ export default function AboutScreen() {
               <FontAwesome5 name="chess" size={60} color={colors.primary} />
             </View>
             <Text style={[styles.appName, { color: colors.text }]}>Chess Analyzer</Text>
-            <Text style={[styles.tagline, { color: colors.textSecondary }]}>Analiza todas tus partidas con solo grabarlas</Text>
+            <Text style={[styles.tagline, { color: colors.textSecondary }]}>{t.about.subtitle}</Text>
             <Text style={[styles.version, { color: colors.primary }]}>Versión {appVersion}</Text>
             <Text style={[styles.buildNumber, { color: colors.textSecondary }]}>Build {buildNumber}</Text>
           </View>
 
           {/* Descripción */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>¿Qué es Chess Analyzer?</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.whatIsTitle}</Text>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <Text style={[styles.description, { color: colors.textSecondary }]}>
-                Chess Analyzer es una aplicación que integra funcionalidades de visión por computador para el análisis de partidas de ajedrez. Permite a los usuarios grabar sus partidas físicas y obtener un análisis detallado de sus movimientos, sugiriendo las mejores jugadas en cada movimiento según el consenso de múltiples motores de ajedrez.
+                {t.about.whatIsText}
               </Text>
             </View>
           </View>
 
           {/* Características */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Características principales</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.featuresTitle}</Text>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.featureItem}>
                 <FontAwesome5 name="video" size={20} color={colors.primary} />
                 <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                  Detección automática de movimientos mediante grabación de video
+                  {t.about.feature1}
                 </Text>
               </View>
               <View style={styles.featureItem}>
                 <FontAwesome5 name="brain" size={20} color={colors.primary} />
                 <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                  Análisis de las mejores jugadas mediante el consenso de múltiples motores de ajedrez
+                  {t.about.feature2}
                 </Text>
               </View>
               <View style={styles.featureItem}>
                 <FontAwesome5 name="eye" size={20} color={colors.primary} />
                 <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                  Visualización de tus partidas en versión digital
+                  {t.about.feature3}
                 </Text>
               </View>
             </View>
@@ -113,18 +115,18 @@ export default function AboutScreen() {
 
           {/* Equipo */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Desarrollado por</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.developedBy}</Text>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
-              <Text style={[styles.teamInfo, { color: colors.textSecondary }]}> 
-                <Text style={[styles.bold, { color: colors.text }]}>Autor:</Text> Pablo Rocha Robles{'\n'}
-                <Text style={[styles.bold, { color: colors.text }]}>Año:</Text> 2026
+              <Text style={[styles.teamInfo, { color: colors.textSecondary }]}>
+                <Text style={[styles.bold, { color: colors.text }]}>{t.about.author}</Text> {t.about.authorName}{'\n'}
+                <Text style={[styles.bold, { color: colors.text }]}>{t.about.year}</Text> 2026
               </Text>
             </View>
           </View>
 
           {/* Tecnologías */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Tecnologías utilizadas</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.techTitle}</Text>
             <View style={styles.techGrid}>
               <View style={[styles.techBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
                 <Text style={[styles.techText, { color: colors.primary }]}>Python</Text>
@@ -155,12 +157,12 @@ export default function AboutScreen() {
 
           {/* Contacto y enlaces */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Contacto y soporte</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.contactTitle}</Text>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenWebsite}>
                 <View style={styles.linkLeft}>
                   <Ionicons name="globe-outline" size={24} color={colors.primary} />
-                  <Text style={[styles.linkText, { color: colors.text }]}>Sitio web</Text>
+                  <Text style={[styles.linkText, { color: colors.text }]}>{t.about.website}</Text>
                 </View>
                 <Ionicons name="open-outline" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -177,12 +179,12 @@ export default function AboutScreen() {
 
           {/* Legal */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Legal</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t.about.legal}</Text>
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenPrivacy}>
                 <View style={styles.linkLeft}>
                   <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
-                  <Text style={[styles.linkText, { color: colors.text }]}>Política de Privacidad</Text>
+                  <Text style={[styles.linkText, { color: colors.text }]}>{t.about.privacyPolicy}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -190,7 +192,7 @@ export default function AboutScreen() {
               <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenTerms}>
                 <View style={styles.linkLeft}>
                   <Ionicons name="document-text-outline" size={24} color={colors.textSecondary} />
-                  <Text style={[styles.linkText, { color: colors.text }]}>Términos de Uso</Text>
+                  <Text style={[styles.linkText, { color: colors.text }]}>{t.about.termsOfUse}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -198,7 +200,7 @@ export default function AboutScreen() {
               <TouchableOpacity style={[styles.linkItem, { borderBottomColor: colors.border }]} onPress={handleOpenLicenses}>
                 <View style={styles.linkLeft}>
                   <Ionicons name="code-slash-outline" size={24} color={colors.textSecondary} />
-                  <Text style={[styles.linkText, { color: colors.text }]}>Licencias de código abierto</Text>
+                  <Text style={[styles.linkText, { color: colors.text }]}>{t.about.openSource}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -209,13 +211,13 @@ export default function AboutScreen() {
           <View style={styles.section}>
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={handleRateApp}>
               <Ionicons name="star" size={24} color="#f59e0b" />
-              <Text style={styles.actionButtonText}>Valorar en la tienda</Text>
+              <Text style={styles.actionButtonText}>{t.about.rateStore}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.actionButton, styles.secondaryButton, { backgroundColor: colors.card, borderColor: colors.primary }]} onPress={handleShare}>
               <Ionicons name="share-social" size={24} color={colors.primary} />
               <Text style={[styles.actionButtonText, styles.secondaryButtonText, { color: colors.primary }]}>
-                Compartir con amigos
+                {t.about.shareApp}
               </Text>
             </TouchableOpacity>
           </View>
@@ -223,10 +225,10 @@ export default function AboutScreen() {
           {/* Copyright */}
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
             <Text style={[styles.copyright, { color: colors.textSecondary }]}>
-              © 2026 ChessVision. Todos los derechos reservados.
+              {t.about.copyright}
             </Text>
             <Text style={[styles.madeWith, { color: colors.textSecondary }]}>
-              Hecho con ♟️ para la comunidad de ajedrez
+              {t.about.madeWith}
             </Text>
           </View>
 

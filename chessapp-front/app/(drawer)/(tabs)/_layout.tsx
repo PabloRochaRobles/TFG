@@ -1,4 +1,5 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +9,7 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const { isDarkMode } = useTheme();
   const colors = useThemeColors();
+  const t = useTranslation();
 
   return (
     <Tabs
@@ -32,7 +34,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Inicio',
+          title: t.tabs.home,
           tabBarIcon: ({ color }) => (
             <FontAwesome name="home" size={32} color={color} />
           ),
@@ -42,7 +44,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="upload"
         options={{
-          title: 'Subir',
+          title: t.tabs.upload,
           tabBarIcon: ({ color }) => (
             <FontAwesome name="upload" size={32} color={color} />
           ),
@@ -52,7 +54,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="camera"
         options={{
-          title: 'Cámara',
+          title: t.tabs.camera,
           tabBarIcon: ({ color }) => (
             <FontAwesome name="camera" size={32} color={color} />
           ),
@@ -62,7 +64,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="library"
         options={{
-          title: 'Librería',
+          title: t.tabs.library,
           tabBarIcon: ({ color }) => (
             <FontAwesome name="bookmark" size={32} color={color} />
           ),

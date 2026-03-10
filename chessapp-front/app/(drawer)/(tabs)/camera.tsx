@@ -7,12 +7,14 @@ import { useRef, useState } from 'react';
 import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 
 export default function CameraScreen() {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const cameraRef = useRef<CameraView>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const t = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
   const colors = useThemeColors();
@@ -23,14 +25,14 @@ export default function CameraScreen() {
     return (
       <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
         <Text style={[styles.permissionText, { color: colors.text }]}>
-          Necesitamos acceso a la cámara y al micrófono para grabar vídeo
+          {t.camera.permissionText}
         </Text>
         <Button
           onPress={async () => {
             if (!cameraPermission.granted) await requestCameraPermission();
             if (!micPermission.granted) await requestMicPermission();
           }}
-          title="Conceder permisos"
+          title={t.camera.grantPermissions}
         />
       </View>
     );
@@ -68,7 +70,7 @@ export default function CameraScreen() {
           >
             <Ionicons name="menu" size={30} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Grabar Video</Text>
+          <Text style={styles.headerTitle}>{t.camera.title}</Text>
         </View>
 
         <CameraView style={styles.camera} ref={cameraRef} mode="video" />
@@ -76,14 +78,14 @@ export default function CameraScreen() {
         {/* Controles */}
         <View style={styles.controlsOverlay}>
           {isRecording && (
-            <Text style={styles.recordingText}>● GRABANDO</Text>
+            <Text style={styles.recordingText}>{t.camera.recording}</Text>
           )}
           <TouchableOpacity
             onPress={handleRecord}
             style={[styles.recordButton, { backgroundColor: isRecording ? 'red' : 'white' }]}
           />
           <Text style={styles.hint}>
-            {isRecording ? 'Toca para detener' : 'Toca para grabar'}
+            {isRecording ? t.camera.tapToStop : t.camera.tapToRecord}
           </Text>
         </View>
       </View>

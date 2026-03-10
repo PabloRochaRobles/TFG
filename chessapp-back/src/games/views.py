@@ -56,7 +56,7 @@ class AnalyzeVideoView(APIView):
     #POST: Ánalisis de un video de ajedrez
     @staticmethod
     def post(request, *args, **kwargs):
-        file_name = request.data.get['video_file']                          # Extracción del nombre del fichero de la petición
+        file_name = request.data.get('video_file')                          # Extracción del nombre del fichero de la petición
         video_path = fs_video.path(file_name)                               # Extracción de la ruta hasta el video
         source_points = get_corners(video_path)                             # Llamada a la función que extrae las esquinas del tablero de ajedrez
 
@@ -114,7 +114,13 @@ class VideoStreamView(APIView):
             return Response({"error: No es un archivo valido"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            response = FileResponse(open(video_path, 'rb'), content_type='video/mp4')
+            # Leer el archivo completo en memoria y cerrarlo antes de enviar la respuesta
+            # Esto evita que el handle del archivo quede abierto durante el streaming (WinError 32 al borrar)
+            with open(video_path, 'rb') as f:
+                content = f.read()
+            from django.http import HttpResponse
+            response = HttpResponse(content, content_type='video/mp4')
+            response['Content-Length'] = len(content)
             return response
 
         except Exception as e:
@@ -191,7 +197,9 @@ def delete_video_and_frames(request, file_name):
 
     ok = delete_temporary_videos(file_name)                                                                             # Ejecuta la función de borrado de video
 
-    if ok:                                                                                                              # Si la ejecución de borrado de video se ha completado:
-        delete_key_frames(os.path.splitext(file_name)[0])                                                               # Borramos los frames claves asociados (si los tuviera creados)
+    if not ok:                                                                                                          # Si el borrado falló:
+        return Response({"error": "No se encontró el video o no se pudo eliminar."}, status=status.HTTP_404_NOT_FOUND)  # Devuelve 404
+
+    delete_key_frames(os.path.splitext(file_name)[0])                                                                   # Borramos los frames claves asociados (si los tuviera creados)
 
     return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200

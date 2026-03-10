@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { API_BASE_URL, deleteVideo, listVideos } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { useTheme } from '../../contexts/ThemeContext';
 
 // ── Tarjeta individual de vídeo ──────────────────────────────────────────────
@@ -76,6 +77,7 @@ export default function LibraryScreen() {
   const navigation = useNavigation();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   const [videos, setVideos] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,7 +90,7 @@ export default function LibraryScreen() {
       const list = await listVideos();
       setVideos(list);
     } catch {
-      setError('No se pudo cargar la librería');
+      setError('loadError');
     } finally {
       setLoading(false);
     }
@@ -100,19 +102,19 @@ export default function LibraryScreen() {
 
   const handleDelete = (fileName: string) => {
     Alert.alert(
-      'Eliminar vídeo',
-      `¿Seguro que quieres eliminar este vídeo?`,
+      t.library.deleteVideo,
+      t.library.deleteConfirm,
       [
-        { text: 'Cancelar', style: 'cancel' },
+        { text: t.library.cancel, style: 'cancel' },
         {
-          text: 'Eliminar',
+          text: t.library.delete,
           style: 'destructive',
           onPress: async () => {
             try {
               await deleteVideo(fileName);
               setVideos((prev) => prev.filter((v) => v !== fileName));
             } catch {
-              Alert.alert('Error', 'No se pudo eliminar el vídeo');
+              Alert.alert(t.library.error, t.library.deleteError);
             }
           },
         },
@@ -136,7 +138,7 @@ export default function LibraryScreen() {
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Librería</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.library.title}</Text>
           <TouchableOpacity style={styles.refreshButton} onPress={fetchVideos}>
             <Ionicons name="refresh" size={24} color={colors.headerText} />
           </TouchableOpacity>
@@ -150,31 +152,31 @@ export default function LibraryScreen() {
             </View>
           ) : error ? (
             <View style={styles.centered}>
-              <Text style={[styles.errorText, { color: colors.text }]}>{error}</Text>
+              <Text style={[styles.errorText, { color: colors.text }]}>{t.library.loadError}</Text>
               <TouchableOpacity
                 style={[styles.retryBtn, { backgroundColor: colors.buttonBg }]}
                 onPress={fetchVideos}
               >
-                <Text style={[styles.retryText, { color: colors.buttonText }]}>Reintentar</Text>
+                <Text style={[styles.retryText, { color: colors.buttonText }]}>{t.library.retry}</Text>
               </TouchableOpacity>
             </View>
           ) : videos.length === 0 ? (
             <View style={styles.centered}>
               <Ionicons name="videocam-off-outline" size={64} color={colors.textSecondary} />
               <Text style={[styles.emptyText, { color: colors.text }]}>
-                No se ha subido ningún{'\n'}vídeo aún
+                {t.library.noVideos}
               </Text>
               <TouchableOpacity
                 style={[styles.retryBtn, { backgroundColor: colors.buttonBg }]}
                 onPress={() => router.push('/(drawer)/(tabs)/upload')}
               >
-                <Text style={[styles.retryText, { color: colors.buttonText }]}>Subir vídeo</Text>
+                <Text style={[styles.retryText, { color: colors.buttonText }]}>{t.library.uploadVideo}</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <>
               <Text style={[styles.counterText, { color: colors.text }]}>
-                {videos.length} {videos.length === 1 ? 'vídeo' : 'vídeos'}
+                {videos.length} {videos.length === 1 ? t.library.video : t.library.videos}
               </Text>
               <FlatList
                 data={videos}

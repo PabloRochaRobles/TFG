@@ -1,5 +1,6 @@
-import { useThemeColors } from '@/hooks/use-theme-color';
 import { analyzeVideo } from '@/constants/api';
+import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -17,6 +18,7 @@ export default function AnalysisScreen() {
   const { file } = useLocalSearchParams<{ file: string }>();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   const [phase, setPhase] = useState<Phase>('analyzing');
   const [totalFrames, setTotalFrames] = useState<number>(0);
@@ -42,7 +44,7 @@ export default function AnalysisScreen() {
   const copyAnalysisId = () => {
     if (!analysisId) return;
     Clipboard.setString(analysisId);
-    Alert.alert('Copiado', 'ID de análisis copiado al portapapeles');
+    Alert.alert(t.analysis.copied, t.analysis.copiedMessage);
   };
 
   return (
@@ -58,7 +60,7 @@ export default function AnalysisScreen() {
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Análisis de Partida</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.analysis.title}</Text>
           <TouchableOpacity style={styles.closeButton} onPress={() => router.back()}>
             <Ionicons name="close" size={30} color={colors.headerText} />
           </TouchableOpacity>
@@ -72,7 +74,7 @@ export default function AnalysisScreen() {
           <View style={[styles.fileInfo, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Ionicons name="film-outline" size={18} color={colors.textSecondary} />
             <Text style={[styles.fileName, { color: colors.textSecondary }]} numberOfLines={1}>
-              {file ?? 'Sin fichero'}
+              {file ?? t.analysis.noFile}
             </Text>
           </View>
 
@@ -80,9 +82,9 @@ export default function AnalysisScreen() {
           {phase === 'analyzing' && (
             <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
               <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.statusTitle, { color: colors.text }]}>Analizando partida...</Text>
+              <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.analyzing}</Text>
               <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                Extrayendo posiciones clave del vídeo
+                {t.analysis.extracting}
               </Text>
             </View>
           )}
@@ -91,15 +93,15 @@ export default function AnalysisScreen() {
           {phase === 'error' && (
             <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
               <Ionicons name="alert-circle-outline" size={52} color="#ef4444" />
-              <Text style={[styles.statusTitle, { color: colors.text }]}>Error en el análisis</Text>
+              <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.error}</Text>
               <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                No se ha podido procesar el vídeo
+                {t.analysis.processingError}
               </Text>
               <TouchableOpacity
                 style={[styles.retryButton, { backgroundColor: colors.buttonBg }]}
                 onPress={runAnalysis}
               >
-                <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>Reintentar</Text>
+                <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>{t.analysis.retry}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -111,15 +113,15 @@ export default function AnalysisScreen() {
               <View style={[styles.resultBox, { backgroundColor: colors.card }]}>
                 <View style={styles.resultRow}>
                   <Ionicons name="checkmark-circle" size={26} color="#22c55e" />
-                  <Text style={[styles.resultTitle, { color: colors.text }]}>Análisis completado</Text>
+                  <Text style={[styles.resultTitle, { color: colors.text }]}>{t.analysis.complete}</Text>
                 </View>
                 <View style={styles.statRow}>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Posiciones detectadas:</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t.analysis.positionsDetected}</Text>
                   <Text style={[styles.statValue, { color: colors.primary }]}>{totalFrames}</Text>
                 </View>
                 {analysisId && (
                   <TouchableOpacity style={styles.statRow} onPress={copyAnalysisId}>
-                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>ID de análisis:</Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t.analysis.analysisId}</Text>
                     <Text
                       style={[styles.statValue, { color: colors.textSecondary, fontSize: 12, flex: 1, textAlign: 'right' }]}
                       numberOfLines={1}
@@ -149,7 +151,7 @@ export default function AnalysisScreen() {
                   ))}
                 </View>
                 <Text style={[styles.boardCaption, { color: colors.textSecondary }]}>
-                  Tablero interactivo — próximamente
+                  {t.analysis.interactiveBoard}
                 </Text>
               </View>
 
@@ -193,21 +195,20 @@ export default function AnalysisScreen() {
               {/* Análisis de motores — pendiente */}
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                  Análisis de jugadas (motores)
+                  {t.analysis.moveAnalysis}
                 </Text>
                 <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <FontAwesome5 name="chess-knight" size={32} color={colors.textSecondary} />
-                  <Text style={[styles.pendingTitle, { color: colors.text }]}>Próximamente</Text>
+                  <Text style={[styles.pendingTitle, { color: colors.text }]}>{t.analysis.comingSoon}</Text>
                   <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
-                    El análisis de jugadas con Stockfish, Obsidian y PlentyChess estará disponible
-                    en cuanto se integre el reconocimiento de posiciones FEN desde las imágenes.
+                    {t.analysis.comingSoonText}
                   </Text>
                 </View>
               </View>
 
               {/* Leyenda de motores */}
               <View style={[styles.legend, { backgroundColor: colors.card }]}>
-                <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>Motores de análisis:</Text>
+                <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>{t.analysis.analysisEngines}</Text>
                 <View style={styles.legendItems}>
                   <View style={styles.legendItem}>
                     <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />

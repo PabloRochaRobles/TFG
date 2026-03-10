@@ -1,4 +1,5 @@
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
@@ -6,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LANGUAGES, useLanguage } from '../contexts/LanguageContext';
 import { useTheme } from '../contexts/ThemeContext';
 
 export default function SettingsScreen() {
@@ -13,32 +15,23 @@ export default function SettingsScreen() {
   const navigation = useNavigation();
   const colors = useThemeColors();
   const { isDarkMode, toggleTheme } = useTheme();
+  const { language, setLanguage } = useLanguage();
+  const t = useTranslation();
 
   // Estados para las configuraciones
   const [notifications, setNotifications] = useState(true);
   const [autoAnalysis, setAutoAnalysis] = useState(false);
-  const [saveToCloud, setSaveToCloud] = useState(true);
-  const [highQuality, setHighQuality] = useState(true);
   const [supportModalVisible, setSupportModalVisible] = useState(false);
   const [supportEmail, setSupportEmail] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
 
-  const languages = [
-    { id: 'Español', name: 'Español', flag: '🇪🇸' },
-    { id: 'English', name: 'English', flag: '🇬🇧' },
-  ];
-
-  const handleLanguageSelect = (langId: string) => {
-    Alert.alert('Idioma seleccionado', `Has elegido ${langId}`);
-  };
-
   const handleDeleteVideos = () => {
     Alert.alert(
-      'Eliminar videos',
-      '¿Estás seguro de que quieres eliminar todos los videos?',
+      t.settings.deleteVideos,
+      t.settings.deleteVideosConfirm,
       [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', onPress: () => console.log('Videos eliminados'), style: 'destructive' },
+        { text: t.settings.cancel, style: 'cancel' },
+        { text: t.settings.delete, onPress: () => console.log('Videos eliminados'), style: 'destructive' },
       ]
     );
   };
@@ -55,23 +48,21 @@ export default function SettingsScreen() {
 
   const handleSendSupport = () => {
     if (!supportEmail.trim() || !supportMessage.trim()) {
-      Alert.alert('Error', 'Por favor, completa todos los campos');
+      Alert.alert('Error', t.settings.fillAllFields);
       return;
     }
 
-    // Aquí enviarías los datos al backend
     console.log('Email:', supportEmail);
     console.log('Mensaje:', supportMessage);
 
-    // Cerrar modal y mostrar mensaje de éxito
     setSupportModalVisible(false);
     setSupportEmail('');
     setSupportMessage('');
 
     Alert.alert(
-      'Mensaje enviado',
-      'Gracias por contactar con nosotros. Se le atenderá tan pronto como sea posible.',
-      [{ text: 'OK' }]
+      t.settings.messageSent,
+      t.settings.messageSentDesc,
+      [{ text: t.settings.ok }]
     );
   };
 
@@ -86,7 +77,7 @@ export default function SettingsScreen() {
           >
             <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Ajustes</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.settings.title}</Text>
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
@@ -99,15 +90,15 @@ export default function SettingsScreen() {
           
           {/* Sección: Apariencia */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Apariencia</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.appearance}</Text>
 
             {/* Modo oscuro */}
             <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
                 <Ionicons name="moon" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Modo oscuro</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Tema oscuro para la app</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.darkMode}</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.darkModeDesc}</Text>
                 </View>
               </View>
               <Switch
@@ -121,19 +112,19 @@ export default function SettingsScreen() {
 
           {/* Sección: Idioma */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Idioma y región</Text>
-            
-            {languages.map((lang) => (
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.language}</Text>
+
+            {LANGUAGES.map((lang) => (
               <TouchableOpacity
                 key={lang.id}
                 style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
-                onPress={() => handleLanguageSelect(lang.id)}
+                onPress={() => setLanguage(lang.id)}
               >
                 <View style={styles.settingLeft}>
                   <Text style={styles.flag}>{lang.flag}</Text>
                   <Text style={[styles.settingTitle, { color: colors.text }]}>{lang.name}</Text>
                 </View>
-                {lang.id === 'es' && (
+                {language === lang.id && (
                   <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
                 )}
               </TouchableOpacity>
@@ -142,14 +133,14 @@ export default function SettingsScreen() {
 
           {/* Sección: Notificaciones */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Notificaciones</Text>
-            
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.notifications}</Text>
+
             <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
                 <Ionicons name="notifications" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Notificaciones push</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Recibe alertas de que el análisis esté listo</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.pushNotifications}</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.pushNotificationsDesc}</Text>
                 </View>
               </View>
               <Switch
@@ -163,14 +154,14 @@ export default function SettingsScreen() {
 
           {/* Sección: Análisis */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Análisis de partidas</Text>
-            
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.gameAnalysis}</Text>
+
             <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
                 <Ionicons name="flash" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Análisis automático</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Analizar al subir el video</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.autoAnalysis}</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.autoAnalysisDesc}</Text>
                 </View>
               </View>
               <Switch
@@ -184,14 +175,14 @@ export default function SettingsScreen() {
 
           {/* Sección: Almacenamiento */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Almacenamiento y datos</Text>
-            
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.storage}</Text>
+
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={handleDeleteVideos}>
               <View style={styles.settingLeft}>
                 <Ionicons name="trash-outline" size={24} color={colors.textSecondary} />
                 <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>Eliminar todas las partidas</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>Borrar todas las partidas guardadas</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.deleteGames}</Text>
+                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.deleteGamesDesc}</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
@@ -200,12 +191,12 @@ export default function SettingsScreen() {
 
           {/* Sección: Ayuda y Soporte */}
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Ayuda y soporte</Text>
-            
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.help}</Text>
+
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/about')}>
               <View style={styles.settingLeft}>
                 <Ionicons name="information-circle-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Acerca de</Text>
+                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.about}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -213,18 +204,18 @@ export default function SettingsScreen() {
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/tips')}>
               <View style={styles.settingLeft}>
                 <Ionicons name="help-circle-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Tutorial</Text>
+                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.tutorial}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
               onPress={handleOpenSupportModal}
             >
               <View style={styles.settingLeft}>
                 <Ionicons name="mail-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Contactar soporte</Text>
+                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.contactSupport}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -232,7 +223,7 @@ export default function SettingsScreen() {
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
                 <Ionicons name="shield-checkmark-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Privacidad y seguridad</Text>
+                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.privacy}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -240,7 +231,7 @@ export default function SettingsScreen() {
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <View style={styles.settingLeft}>
                 <Ionicons name="star-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>Valorar la app</Text>
+                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.rateApp}</Text>
               </View>
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -248,8 +239,8 @@ export default function SettingsScreen() {
 
           {/* Versión */}
           <View style={styles.versionContainer}>
-            <Text style={[styles.versionText, { color: colors.textSecondary }]}>Chess Analyzer v1.0.0</Text>
-            <Text style={[styles.versionSubtext, { color: colors.textSecondary }]}>© 2026 Todos los derechos reservados</Text>
+            <Text style={[styles.versionText, { color: colors.textSecondary }]}>{t.settings.version}</Text>
+            <Text style={[styles.versionSubtext, { color: colors.textSecondary }]}>{t.settings.copyright}</Text>
           </View>
         </ScrollView>
 
@@ -271,7 +262,7 @@ export default function SettingsScreen() {
             <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
               {/* Header del modal */}
               <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Contactar soporte</Text>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>{t.settings.contactSupportTitle}</Text>
                 <TouchableOpacity onPress={handleCloseSupportModal} style={styles.closeButton}>
                   <Ionicons name="close" size={28} color={colors.text} />
                 </TouchableOpacity>
@@ -281,14 +272,14 @@ export default function SettingsScreen() {
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                 {/* Campo de email */}
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: colors.text }]}>Tu correo electrónico</Text>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>{t.settings.emailLabel}</Text>
                   <TextInput
-                    style={[styles.input, { 
-                      backgroundColor: colors.background, 
+                    style={[styles.input, {
+                      backgroundColor: colors.background,
                       color: colors.text,
                       borderColor: colors.border
                     }]}
-                    placeholder="ejemplo@correo.com"
+                    placeholder={t.settings.emailPlaceholder}
                     placeholderTextColor={colors.textSecondary}
                     value={supportEmail}
                     onChangeText={setSupportEmail}
@@ -299,14 +290,14 @@ export default function SettingsScreen() {
 
                 {/* Campo de mensaje */}
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.inputLabel, { color: colors.text }]}>Mensaje</Text>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>{t.settings.messageLabel}</Text>
                   <TextInput
-                    style={[styles.textArea, { 
-                      backgroundColor: colors.background, 
+                    style={[styles.textArea, {
+                      backgroundColor: colors.background,
                       color: colors.text,
                       borderColor: colors.border
                     }]}
-                    placeholder="Describe tu problema o pregunta..."
+                    placeholder={t.settings.messagePlaceholder}
                     placeholderTextColor={colors.textSecondary}
                     value={supportMessage}
                     onChangeText={setSupportMessage}
@@ -319,18 +310,18 @@ export default function SettingsScreen() {
 
               {/* Botones */}
               <View style={styles.modalFooter}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.modalButton, styles.cancelButton, { borderColor: colors.border }]}
                   onPress={handleCloseSupportModal}
                 >
-                  <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancelar</Text>
+                  <Text style={[styles.cancelButtonText, { color: colors.text }]}>{t.settings.cancel}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.modalButton, styles.sendButton, { backgroundColor: colors.primary }]}
                   onPress={handleSendSupport}
                 >
-                  <Text style={styles.sendButtonText}>Enviar</Text>
+                  <Text style={styles.sendButtonText}>{t.settings.send}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -571,6 +562,3 @@ const styles = StyleSheet.create({
   },
 });
 
-function setSupportModalVisible(arg0: boolean) {
-  throw new Error('Function not implemented.');
-}

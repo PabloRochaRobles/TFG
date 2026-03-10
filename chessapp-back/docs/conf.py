@@ -6,10 +6,10 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'chessapp-backdoc'
+project = 'chessapp-back'
 copyright = '2026, Pablo Rocha Robles'
 author = 'Pablo Rocha Robles'
-release = '1'
+release = '1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

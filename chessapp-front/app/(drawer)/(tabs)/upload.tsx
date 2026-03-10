@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { uploadVideo } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
+import { useTranslation } from '@/hooks/use-translation';
 import { useTheme } from '../../contexts/ThemeContext';
 
 type Phase = 'idle' | 'uploading' | 'uploaded' | 'error';
@@ -25,6 +26,7 @@ export default function UploadScreen() {
 
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   const player = useVideoPlayer('', (p) => { p.loop = true; });
 
@@ -50,7 +52,7 @@ export default function UploadScreen() {
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permiso denegado', 'Se necesitan permisos para acceder a la galería');
+      Alert.alert(t.upload.permissionDenied, t.upload.galleryPermission);
       return;
     }
 
@@ -104,7 +106,7 @@ export default function UploadScreen() {
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>Subir Video</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.upload.title}</Text>
         </View>
 
         <ScrollView contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}>
@@ -130,7 +132,7 @@ export default function UploadScreen() {
             >
               <Ionicons name="cloud-upload-outline" size={60} color={colors.text} />
               <Text style={[styles.uploadText, { color: colors.text }]}>
-                Toca para seleccionar un vídeo
+                {t.upload.tapToSelect}
               </Text>
             </TouchableOpacity>
           )}
@@ -139,7 +141,7 @@ export default function UploadScreen() {
           {isLoading && (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.text }]}>Subiendo video...</Text>
+              <Text style={[styles.loadingText, { color: colors.text }]}>{t.upload.uploading}</Text>
             </View>
           )}
 
@@ -150,21 +152,21 @@ export default function UploadScreen() {
                 style={[styles.cancelButton, { borderColor: colors.border }]}
                 onPress={handleReset}
               >
-                <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancelar</Text>
+                <Text style={[styles.cancelButtonText, { color: colors.text }]}>{t.upload.cancel}</Text>
               </TouchableOpacity>
               {phase === 'uploaded' ? (
                 <TouchableOpacity
                   style={[styles.analyzeButton, { backgroundColor: '#27ae60' }]}
                   onPress={() => router.push({ pathname: '/(drawer)/analysis', params: { file: savedFileName } })}
                 >
-                  <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>Analizar partida</Text>
+                  <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>{t.upload.analyzeGame}</Text>
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity
                   style={[styles.analyzeButton, { backgroundColor: colors.buttonBg }]}
                   onPress={handleUpload}
                 >
-                  <Text style={[styles.analyzeButtonText, { color: colors.buttonText }]}>Subir video</Text>
+                  <Text style={[styles.analyzeButtonText, { color: colors.buttonText }]}>{t.upload.uploadVideo}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -174,16 +176,16 @@ export default function UploadScreen() {
           {(
             <View style={styles.stepsContainer}>
               <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
-                <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 1:</Text>
-                <Text style={[styles.stepDescription, { color: colors.text }]}>Selecciona tu partida de ajedrez.</Text>
+                <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step1}</Text>
+                <Text style={[styles.stepDescription, { color: colors.text }]}>{t.upload.step1Text}</Text>
               </View>
               <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
-                <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 2:</Text>
-                <Text style={[styles.stepDescription, { color: colors.text }]}>Pulsa el botón de subir vídeo.</Text>
+                <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step2}</Text>
+                <Text style={[styles.stepDescription, { color: colors.text }]}>{t.upload.step2Text}</Text>
               </View>
               <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
-                <Text style={[styles.stepTitle, { color: colors.text }]}>Paso 3:</Text>
-                <Text style={[styles.stepDescription, { color: colors.text }]}>Pulsa el botón de analizar.</Text>
+                <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step3}</Text>
+                <Text style={[styles.stepDescription, { color: colors.text }]}>{t.upload.step3Text}</Text>
               </View>
             </View>
           )}
