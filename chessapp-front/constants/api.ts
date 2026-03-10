@@ -26,7 +26,7 @@ export async function uploadVideo(videoUri: string, fileName: string): Promise<{
   return response.json();
 }
 
-export async function analyzeVideo(fileName: string): Promise<{ message: string; total_frames: number; analisis_id: string }> {
+export async function analyzeVideo(fileName: string): Promise<{ message: string; total_frames: number; analisis_id: string; total_fens: number; fens: string[] }> {
   const response = await fetch(`${API_BASE_URL}/api/partidas/analyze/`, {
     method: 'POST',
     headers: {

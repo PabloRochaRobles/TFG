@@ -10,6 +10,25 @@ import { ActivityIndicator, Clipboard, Alert, ScrollView, StyleSheet, Text, Touc
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 
+// Mapeo de letras FEN a símbolos Unicode de ajedrez
+const PIECE_SYMBOLS: Record<string, string> = {
+  K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
+  k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
+};
+
+// Convierte la parte de posición de un FEN en una matriz 8×8 de letras de piezas
+function fenToBoard(fen: string): string[][] {
+  const rows = fen.split(' ')[0].split('/');
+  return rows.map(row => {
+    const cells: string[] = [];
+    for (const ch of row) {
+      if (/\d/.test(ch)) cells.push(...Array(Number(ch)).fill(''));
+      else cells.push(ch);
+    }
+    return cells;
+  });
+}
+
 type Phase = 'analyzing' | 'done' | 'error';
 
 export default function AnalysisScreen() {
@@ -23,7 +42,10 @@ export default function AnalysisScreen() {
   const [phase, setPhase] = useState<Phase>('analyzing');
   const [totalFrames, setTotalFrames] = useState<number>(0);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [fens, setFens] = useState<string[]>([]);
   const [currentMove, setCurrentMove] = useState(0);
+
+  const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
   useEffect(() => {
     if (file) runAnalysis();
@@ -32,9 +54,11 @@ export default function AnalysisScreen() {
   const runAnalysis = async () => {
     try {
       setPhase('analyzing');
+      setCurrentMove(0);
       const result = await analyzeVideo(file as string);
       setTotalFrames(result.total_frames);
       setAnalysisId(result.analisis_id);
+      setFens(result.fens ?? []);
       setPhase('done');
     } catch (err: any) {
       setPhase('error');
@@ -133,18 +157,22 @@ export default function AnalysisScreen() {
                 )}
               </View>
 
-              {/* Tablero de ajedrez (placeholder) */}
+              {/* Tablero de ajedrez con piezas reales */}
               <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
                 <View style={styles.chessBoard}>
-                  {[...Array(8)].map((_, row) => (
-                    <View key={row} style={styles.boardRow}>
-                      {[...Array(8)].map((_, col) => {
-                        const isLight = (row + col) % 2 === 0;
+                  {(fens.length > 0 ? fenToBoard(fens[currentMove]) : Array(8).fill(Array(8).fill(''))).map((row, rowIdx) => (
+                    <View key={rowIdx} style={styles.boardRow}>
+                      {(row as string[]).map((piece, colIdx) => {
+                        const isLight = (rowIdx + colIdx) % 2 === 0;
+                        const isWhitePiece = piece !== '' && piece === piece.toUpperCase();
                         return (
-                          <View
-                            key={col}
-                            style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}
-                          />
+                          <View key={colIdx} style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}>
+                            {piece !== '' && (
+                              <Text style={[styles.piece, { color: isWhitePiece ? '#fff' : '#1a1a1a', textShadowColor: isWhitePiece ? '#555' : '#ddd' }]}>
+                                {PIECE_SYMBOLS[piece] ?? ''}
+                              </Text>
+                            )}
+                          </View>
                         );
                       })}
                     </View>
@@ -173,22 +201,22 @@ export default function AnalysisScreen() {
                 </TouchableOpacity>
                 <View style={[styles.moveCountBadge, { backgroundColor: colors.primaryLight }]}>
                   <Text style={[styles.moveCountText, { color: colors.primary }]}>
-                    {currentMove} / {totalFrames}
+                    {currentMove} / {maxMove}
                   </Text>
                 </View>
                 <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === totalFrames && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(c => Math.min(totalFrames, c + 1))}
-                  disabled={currentMove === totalFrames}
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(c => Math.min(maxMove, c + 1))}
+                  disabled={currentMove === maxMove}
                 >
-                  <Ionicons name="chevron-forward" size={26} color={currentMove === totalFrames ? colors.textSecondary : colors.primary} />
+                  <Ionicons name="chevron-forward" size={26} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === totalFrames && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(totalFrames)}
-                  disabled={currentMove === totalFrames}
+                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
+                  onPress={() => setCurrentMove(maxMove)}
+                  disabled={currentMove === maxMove}
                 >
-                  <Ionicons name="play-skip-forward" size={22} color={currentMove === totalFrames ? colors.textSecondary : colors.primary} />
+                  <Ionicons name="play-skip-forward" size={22} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
                 </TouchableOpacity>
               </View>
 
@@ -341,9 +369,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   boardRow: { flex: 1, flexDirection: 'row' },
-  square: { flex: 1 },
+  square: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   lightSquare: { backgroundColor: '#f0d9b5' },
   darkSquare: { backgroundColor: '#b58863' },
+  piece: {
+    fontSize: 22,
+    textAlign: 'center',
+    textShadowOffset: { width: 0.5, height: 0.5 },
+    textShadowRadius: 1,
+  },
   boardCaption: { fontSize: 12 },
 
   // Controles

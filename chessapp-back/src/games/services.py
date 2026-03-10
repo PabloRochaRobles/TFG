@@ -1,3 +1,4 @@
+import json
 import os
 from collections import Counter
 from string import punctuation
@@ -12,11 +13,14 @@ from rest_framework import status
 
 TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 TEMP_FRAMES_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
+ENGINES_DIR          = os.path.join(settings.BASE_DIR, 'misc', 'engines')
 
 NORMALIZED_SIZE = 1000
 PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
+CELL_CHANGE_THRESHOLD = 20          # Diferencia media de píxeles para considerar una celda cambiada
+FENS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'fens')
 
 # -----------------------------------------
 # Funciones de Manejo de Video
@@ -197,81 +201,326 @@ def delete_key_frames(file_name):
 def extract_key_frames(video_path, coords):
 
     # Variables de la función
-    key_frames = []                                                         # Lista de los frames claves
-    frames_since_motion = 0                                                 # Contador de frames que han pasado sin que haya movimiento
-    motion_detected = False                                                 # Detector de movimiento
-    area_threshold_start = 150000                                           # Valor minimo que debe superarse para considerar que se está realizando un movimiento
-    area_threshold_end = 25000                                              # Valor máximo en el que se considera que hay estabilidad en la imagen
-    stability_frames = 10                                                   # Umbral que debe superarse para considerar que el tablero ya ha estado en estabilidad y la jugada anterior terminó
+    key_frames = []                 # Lista de los frames claves
+    frames_since_motion = 0         # Frames consecutivos de estabilidad desde el último movimiento
+    motion_detected = False         # Indica si actualmente se está detectando un movimiento
 
-    mat = get_matriz(coords)                                                # Llamada a la función de la matriz de transformación                                                            # Almacena los valores de la variable dims en dos variables
+    # ── Umbrales ───────────────────────────────────────────────────────────────
+    # Se usa diferencia entre frames consecutivos para detectar movimiento y estabilidad.
+    # Esto evita el bug de "referencia congelada": cuando la pieza llega a su nueva casilla
+    # la diff consecutiva cae a 0, aunque la diff con la referencia pre-movimiento sea alta.
+    # La diff con la referencia sólo se usa al final para confirmar que hubo un movimiento real
+    # (descarta falsas alarmas como pulsar el reloj o golpes sin mover pieza).
+    threshold_start     = 2000      # Píxeles distintos entre frames consecutivos para detectar inicio
+    threshold_end       = 600       # Píxeles distintos entre frames consecutivos para considerar estabilidad
+    stability_frames    = 20        # Frames consecutivos estables necesarios para guardar frame clave
+    min_change_from_ref = 5000      # Diff mínima contra referencia para confirmar movimiento real
 
-    video = open_video(video_path)                                          # Llamada a la función que abre el video y almacenamiento en la variable
+    mat   = get_matriz(coords)
+    video = open_video(video_path)
     ret, frame_ref = video.read()                                           # Obtención del primer frame
 
     if not ret:
-        return {f"DEBUG: error": "Video vacío."}                                    # Si no se pudo leer el frame, notifica del error
+        return {"error": "Video vacío."}
 
-    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))          # Modificación del frame alterando la perspectiva para visualizar solamente el tablero
-    blur_ref = process_image(frame_ref_warped)                                                          # Llamada a la función de procesamiento de imagen
+    frame_ref_warped = cv2.warpPerspective(frame_ref, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))  # Transformación de perspectiva
+    blur_ref  = process_image(frame_ref_warped)                                                 # Última posición estable conocida del tablero
+    blur_prev = blur_ref.copy()                                                                 # Frame anterior para diff consecutiva
 
-    fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)     # Algoritmo de substracción de fondo. Detectando los píxeles cambiantes y los estables
-
-    while video.isOpened():                                                 # Bucle de procesamiento del video
-        ret, frame_curr = video.read()                                      # Extrae el frame actual
-        if not ret:                                                         # Si devuelve falso, el video ha acabado
+    while video.isOpened():
+        ret, frame_curr = video.read()
+        if not ret:
             break
 
-        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))    # Modificación del frame actual alterando la perspectiva para visualizar solamente el tablero
-        blur_curr = process_image(frame_curr_warped)                                                    # Procesamiento de la imagen del frame actual
-        fgmask = fgbg.apply(blur_curr)                                                                  # Almacena la máscara de movimiento en la variable
-        frame_diff = cv2.absdiff(blur_ref, blur_curr)                                                   # Cálculo de la diferencia absoluta entre el frame de referencia y el actual
-        _, thresh = cv2.threshold(frame_diff, 30, 255, cv2.THRESH_BINARY)                               # Función que realiza la umbralización
-        motion_area = np.sum(fgmask > 0)                                                                # Cuantificación del movimiento. Para detectar si se está realizando un movimiento o no
+        frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+        blur_curr = process_image(frame_curr_warped)
 
-        if motion_detected == False:                                        # En caso de que no se detecte un movimiento:
+        # Diferencia entre frames consecutivos: detecta movimiento activo entre fotogramas adyacentes
+        consec_diff  = cv2.absdiff(blur_prev, blur_curr)
+        _, consec_thresh = cv2.threshold(consec_diff, 15, 255, cv2.THRESH_BINARY)
+        consec_area  = int(np.sum(consec_thresh > 0))
 
-            if motion_area > area_threshold_start:                          # Si se considera que esta ocurriendo un movimiento
-                motion_detected = True                                          # Se pone la variable que detecta el movimiento a true
-                frames_since_motion = 0                                         # Y se reestablece cuenta a 0
-            elif motion_area < 500:                                         # Si la imagen tiene muy poco movimiento
-                alpha = 0.99
-                beta = 1.0 - alpha
-                blur_ref = cv2.addWeighted(blur_ref, alpha, blur_curr, beta, 0) # Calculo el promedio ponderado de la imagen de referencia y la actual
+        if not motion_detected:
+            if consec_area > threshold_start:                               # Inicio de movimiento detectado
+                motion_detected     = True
+                frames_since_motion = 0
+            else:
+                # Actualización gradual del frame de referencia para compensar cambios de iluminación
+                blur_ref = cv2.addWeighted(blur_ref, 0.99, blur_curr, 0.01, 0)
 
-        else:                                                               # En caso de que se detecte un movimiento:
+        else:                                                               # Durante el movimiento
+            if consec_area < threshold_end:
+                frames_since_motion += 1                                    # Frame estable: incrementar contador
+            else:
+                frames_since_motion = 0                                     # Movimiento aún activo: reiniciar
 
-            if motion_area < area_threshold_end:                            # Si el movimiento es menor al umbral
-                frames_since_motion += 1                                        # Se considera estable y se añade +1
-            else:                                                           # Si el movimiento es mayor o igual al umbral
-                frames_since_motion = 0                                         # No se considera estable y se reestablece a 0 el contador
+            if frames_since_motion >= stability_frames:                     # Tablero estabilizado tras el movimiento
+                # Confirmar movimiento real comparando contra la última posición estable de referencia
+                ref_diff = cv2.absdiff(blur_ref, blur_curr)
+                _, ref_thresh = cv2.threshold(ref_diff, 25, 255, cv2.THRESH_BINARY)
+                ref_area = int(np.sum(ref_thresh > 0))
 
-        print(f"DEBUG: Frames since motion: {frames_since_motion}")
-        print(f"DEBUG: Motion area: {motion_area}")
+                if ref_area > min_change_from_ref:
+                    frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)
+                    key_frames.append(frame_rotate)                         # Guardar frame clave
+                    blur_ref = blur_curr.copy()                             # Nueva referencia = posición actual
+                    print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area})")
+                else:
+                    print(f"[FRAMES] Movimiento ignorado como falsa alarma (ref_area={ref_area})")
 
-        if motion_detected and frames_since_motion > stability_frames:      # Si se ha detectado movimiento y se ha alcanzado el número de frames de estabilidad desde la jugada anterior:
+                motion_detected     = False
+                frames_since_motion = 0
 
-            frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)    # Se aplica una rotación de 180 grados al frame recortad
-            key_frames.append(frame_rotate)                                 # Se añade el frame rotado a la lista con los frames claves
-            blur_ref = blur_curr.copy()                                     # El frame actual pasa a ser el de referencia
-            motion_detected = False                                         # Se cambia la variable de movimiento detectado a falso
-            frames_since_motion = 0                                         # Se reestablece la cuenta de frames desde un movimiento
+        blur_prev = blur_curr
 
-            #cv2.imshow(f"DEBUG: Diferencia de Frames Normal", cv2.rotate(frame_curr_warped, cv2.ROTATE_180))
-            #cv2.waitKey(0)
-            print(f"DEBUG: Frame Guardado!")
+    video.release()
+    return key_frames
 
-        print("/////////////////////////////////")
+# -----------------------------------------
+# Detección automática de esquinas del tablero
+# -----------------------------------------
 
-    video.release()                                                         # Cierra del video
-    return key_frames                                                       # Devuelve la lista con todos los frames claves
+def order_corners(corners):
+    """Ordena 4 esquinas detectadas en orden [TL, TR, BR, BL]."""
+    s    = corners.sum(axis=1)            # TL: min(x+y),  BR: max(x+y)
+    diff = corners[:, 0] - corners[:, 1]  # TR: max(x-y),  BL: min(x-y)
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    ordered[0] = corners[np.argmin(s)]
+    ordered[1] = corners[np.argmax(diff)]
+    ordered[2] = corners[np.argmax(s)]
+    ordered[3] = corners[np.argmin(diff)]
+    return ordered
+
+
+def auto_detect_board_corners(frame):
+    """
+    Detecta automáticamente las 4 esquinas exteriores del tablero de ajedrez.
+    Devuelve float32 en orden [TL, TR, BR, BL] compatible con get_matriz().
+    Si la detección falla usa la imagen completa con margen del 2%.
+    """
+    h, w     = frame.shape[:2]
+    gray     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    min_area = h * w * 0.05
+    kernel   = np.ones((5, 5), np.uint8)
+
+    def find_quad(binary):
+        cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in sorted(cnts, key=cv2.contourArea, reverse=True)[:20]:
+            if cv2.contourArea(c) < min_area:
+                break
+            peri = cv2.arcLength(c, True)
+            for eps in (0.01, 0.02, 0.03, 0.05):
+                approx = cv2.approxPolyDP(c, eps * peri, True)
+                if len(approx) == 4:
+                    return np.float32([p[0] for p in approx])
+        return None
+
+    # Estrategia 1: Canny + dilatación
+    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+    edges   = cv2.Canny(blurred, 30, 100)
+    edges   = cv2.dilate(edges, kernel, iterations=2)
+    result  = find_quad(edges)
+    if result is not None:
+        print("[CORNERS] Esquinas detectadas con Canny")
+        return order_corners(result)
+
+    # Estrategia 2: Umbral adaptativo
+    blurred = cv2.GaussianBlur(gray, (11, 11), 0)
+    thresh  = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                    cv2.THRESH_BINARY_INV, 11, 2)
+    thresh  = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    result  = find_quad(thresh)
+    if result is not None:
+        print("[CORNERS] Esquinas detectadas con umbral adaptativo")
+        return order_corners(result)
+
+    # Fallback: imagen completa con pequeño margen
+    print("[CORNERS] Auto-detección falló, usando imagen completa")
+    mx, my = w * 0.02, h * 0.02
+    return np.float32([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]])
+
+
+def get_first_frame(video_path):
+    """Lee y devuelve el primer frame del video sin mantenerlo abierto."""
+    cap = open_video(video_path)
+    if isinstance(cap, dict):
+        return None
+    ret, frame = cap.read()
+    cap.release()
+    return frame if ret else None
+
+
+def get_initial_board_frame(video_path, corners):
+    """
+    Obtiene el primer frame del video con la transformación de perspectiva
+    y la rotación aplicadas (mismo proceso que los frames clave).
+    """
+    frame = get_first_frame(video_path)
+    if frame is None:
+        return None
+    mat    = get_matriz(corners)
+    warped = cv2.warpPerspective(frame, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+    return cv2.rotate(warped, cv2.ROTATE_180)
+
+
+# -----------------------------------------
+# Comparación de celdas del tablero para detección de movimientos
+# -----------------------------------------
+
+def get_board_cells(board_image):
+    """Divide la imagen del tablero (NORMALIZED_SIZE × NORMALIZED_SIZE) en 64 celdas 8×8."""
+    cs = NORMALIZED_SIZE // 8
+    return [board_image[r*cs:(r+1)*cs, c*cs:(c+1)*cs] for r in range(8) for c in range(8)]
+
+
+def get_changed_cells(frame_before, frame_after, threshold=CELL_CHANGE_THRESHOLD):
+    """
+    Compara las 64 celdas entre dos frames y devuelve los índices de las
+    celdas que cambiaron significativamente, ordenados por magnitud (mayor primero).
+    Devuelve como máximo 8 resultados para filtrar ruido.
+    """
+    def to_gray(img):
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+
+    cells_b = get_board_cells(to_gray(frame_before))
+    cells_a = get_board_cells(to_gray(frame_after))
+
+    changes = []
+    for i, (cb, ca) in enumerate(zip(cells_b, cells_a)):
+        mean_diff = float(np.mean(cv2.absdiff(cb, ca)))
+        if mean_diff > threshold:
+            changes.append((i, mean_diff))
+
+    changes.sort(key=lambda x: x[1], reverse=True)
+    return [idx for idx, _ in changes[:8]]
+
+
+def cell_index_to_square(cell_index):
+    """
+    Convierte índice de celda (0–63, fila a fila desde arriba-izquierda = a8)
+    en casilla de python-chess. Asume orientación estándar: blancas abajo.
+    """
+    return chess.square(cell_index % 8, 7 - cell_index // 8)
+
+
+def detect_move_from_squares(board, changed_squares):
+    """
+    Dado el estado del tablero y las casillas que cambiaron, devuelve el
+    movimiento legal que mejor explica los cambios (máxima intersección).
+    Retorna None si ningún movimiento tiene al menos 2 casillas en común.
+    """
+    changed_set = set(changed_squares)
+    best_move, best_overlap = None, 0
+
+    castling_extras = {
+        chess.G1: {chess.H1, chess.F1},   # Enroque corto blancas
+        chess.C1: {chess.A1, chess.D1},   # Enroque largo blancas
+        chess.G8: {chess.H8, chess.F8},   # Enroque corto negras
+        chess.C8: {chess.A8, chess.D8},   # Enroque largo negras
+    }
+
+    for move in board.legal_moves:
+        involved = {move.from_square, move.to_square}
+        if board.is_castling(move):
+            involved |= castling_extras.get(move.to_square, set())
+
+        overlap = len(involved & changed_set)
+        if overlap > best_overlap:
+            best_overlap, best_move = overlap, move
+
+    return best_move if best_overlap >= 2 else None
+
+
+# -----------------------------------------
+# Generación y persistencia de FENs
+# -----------------------------------------
+
+def frames_to_fens(all_frames, initial_fen=None):
+    """
+    Convierte una secuencia de frames del tablero en una lista de FENs.
+      all_frames[0]  → posición inicial (antes de cualquier movimiento)
+      all_frames[i]  → posición después del movimiento i
+
+    La lógica NO necesita reconocer las piezas visualmente: sólo detecta
+    qué casillas cambiaron entre frames consecutivos y busca el movimiento
+    legal de python-chess que mejor explica ese cambio.
+
+    Retorna lista de FENs con len(all_frames) elementos.
+    """
+    if initial_fen is None:
+        initial_fen = chess.STARTING_FEN
+
+    board = chess.Board(initial_fen)
+    fens  = [initial_fen]
+
+    for i in range(len(all_frames) - 1):
+        try:
+            changed = get_changed_cells(all_frames[i], all_frames[i + 1])
+            print(f"[FEN] Frame {i}→{i+1}: {len(changed)} celdas cambiadas → índices {changed}")
+
+            if not changed:
+                print(f"[FEN] Sin cambios detectados, manteniendo FEN anterior")
+                fens.append(board.fen())
+                continue
+
+            squares = [cell_index_to_square(idx) for idx in changed]
+            move    = detect_move_from_squares(board, squares)
+
+            if move:
+                san = board.san(move)
+                board.push(move)
+                print(f"[FEN] Movimiento detectado: {san} ({move.uci()})")
+            else:
+                print(f"[FEN] No se pudo determinar el movimiento, manteniendo FEN")
+
+            fens.append(board.fen())
+
+        except Exception as e:
+            print(f"[FEN] Error procesando frame {i}: {e}")
+            fens.append(board.fen())
+
+    return fens
+
+
+def save_fens(fens, analysis_id):
+    """Guarda la secuencia de FENs en media/fens/<analysis_id>.json"""
+    os.makedirs(FENS_LOCATION, exist_ok=True)
+    path = os.path.join(FENS_LOCATION, f"{analysis_id}.json")
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({'fens': fens, 'total': len(fens)}, f)
+    print(f"[FEN] {len(fens)} FENs guardados en {path}")
+    return path
+
+
+def load_fens(analysis_id):
+    """Carga la secuencia de FENs desde media/fens/<analysis_id>.json"""
+    path = os.path.join(FENS_LOCATION, f"{analysis_id}.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data.get('fens', [])
+
 
 # -----------------------------------------
 # Funciones de Análisis de Partida
 # -----------------------------------------
 
 def analysis_best_posStockfish(fen):
-    path_engine = "C:/Users/Admin/Videos/Ajedrez/stockfish/stockfish-windows-x86-64-avx2.exe"
+
+    """
+    Obtiene la mejor jugada para la posición dada en formato FEN utilizando el motor Stockfish.
+        Parametros:
+        - fen: Cadena FEN que representa la posición actual del tablero.
+        
+        - Devuelve un diccionario con:
+            - movement_uci: Movimiento recomendado en formato UCI (ejemplo: "e2e4").
+            - movement_san: Movimiento recomendado en formato SAN (ejemplo: "e4").
+            - new_fen: FEN resultante después de aplicar el movimiento recomendado.
+            - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
+    """
+
+    path_engine = os.path.join(ENGINES_DIR, 'stockfish-windows-x86-64-avx2.exe')
 
     with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
 
@@ -289,7 +538,20 @@ def analysis_best_posStockfish(fen):
         }
 
 def analysis_best_posObsidian(fen):
-    path_engine = "C:/Users/Admin/Videos/Ajedrez/Obsidian160-avx2-pext.exe"
+
+    """
+    Obtiene la mejor jugada para la posición dada en formato FEN utilizando el motor Obsidian.
+        Parametros:
+        - fen: Cadena FEN que representa la posición actual del tablero.
+        
+        - Devuelve un diccionario con:
+            - movement_uci: Movimiento recomendado en formato UCI (ejemplo: "e2e4").
+            - movement_san: Movimiento recomendado en formato SAN (ejemplo: "e4").
+            - new_fen: FEN resultante después de aplicar el movimiento recomendado.
+            - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
+    """
+
+    path_engine = os.path.join(ENGINES_DIR, 'Obsidian160-avx2-pext.exe')
 
     with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
 
@@ -307,7 +569,21 @@ def analysis_best_posObsidian(fen):
         }
 
 def analysis_best_posPlentyChess(fen):
-    path_engine = "C:/Users/Admin/Videos/Ajedrez/PlentyChess-7.0.0-windows-avx2.exe"
+
+    """
+    Obtiene la mejor jugada para la posición dada en formato FEN utilizando el motor PlentyChess.
+
+        Parametros:
+        - fen: Cadena FEN que representa la posición actual del tablero.
+        
+        - Devuelve un diccionario con:
+            - movement_uci: Movimiento recomendado en formato UCI (ejemplo: "e2e4").
+            - movement_san: Movimiento recomendado en formato SAN (ejemplo: "e4").
+            - new_fen: FEN resultante después de aplicar el movimiento recomendado.
+            - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
+    """
+    
+    path_engine = os.path.join(ENGINES_DIR, 'PlentyChess-7.0.0-windows-avx2.exe')
 
     with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
 
@@ -325,6 +601,23 @@ def analysis_best_posPlentyChess(fen):
         }
 
 def consensus_analysis(stock, obsidian, plenty, fen):
+
+    """
+    Dada una posición en formato FEN y las recomendaciones de movimiento de tres motores de ajedrez (Stockfish, Obsidian y PlentyChess),
+    esta función determina el movimiento recomendado por consenso entre los motores. El movimiento de consenso se define como el movimiento 
+    que al menos dos de los motores recomiendan. Si no hay consenso, se selecciona el movimiento recomendado por Stockfish como predeterminado.
+
+    Parámetros:
+    - stock: Diccionario con la recomendación de movimiento de Stockfish, movimiento en formato UCI, movimiento en formato SAN, FEN resultante y evaluación de la posición.
+    - obsidian: Diccionario con la recomendación de movimiento de Obsidian, cono formato similar al de Stockfish.
+    - plenty: Diccionario con la recomendación de movimiento de PlentyChess, con formato similar al de Stockfish.
+    - fen: Cadena FEN que representa la posición actual del tablero.
+
+    Devuelve un diccionario con:
+    - movement_uci: Movimiento recomendado por consenso en formato UCI (ejemplo: "e2e4").
+    - movement_san: Movimiento recomendado por consenso en formato SAN (ejemplo: "e4").
+    - new_fen: FEN resultante después de aplicar el movimiento recomendado por consenso.
+    """
 
     board = chess.Board(fen)
     moves = [
@@ -347,7 +640,7 @@ def consensus_analysis(stock, obsidian, plenty, fen):
         print(f"\n ERROR: El movimiento {most_common_uci} NO es legal en esta posición")
         print(f"Posición: {board.board_fen()}")
         print(f"\nMovimientos legales disponibles:")
-        for legal_move in list(board.legal_moves)[:10]:  # Mostrar primeros 10
+        for legal_move in list(board.legal_moves)[:10]:
             print(f"  - {legal_move.uci()} ({board.san(legal_move)})")
 
         raise ValueError(

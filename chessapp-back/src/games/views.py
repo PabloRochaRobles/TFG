@@ -15,7 +15,9 @@ from django.conf import settings
 
 import chess
 from .services import (
-    extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames, get_corners,
+    extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames,
+    auto_detect_board_corners, get_first_frame, get_initial_board_frame,
+    frames_to_fens, save_fens, load_fens,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
 )
 
@@ -53,35 +55,59 @@ class VideoUploadView(APIView):
 
 class AnalyzeVideoView(APIView):
 
-    #POST: Ánalisis de un video de ajedrez
+    # POST: Análisis de un video de ajedrez con detección automática de tablero y generación de FENs
     @staticmethod
     def post(request, *args, **kwargs):
         file_name = request.data.get('video_file')                          # Extracción del nombre del fichero de la petición
+
+        if not file_name:                                                   # Si no se recibe el nombre del fichero
+            return Response({"error": "No se ha proporcionado el nombre del fichero."}, status=status.HTTP_400_BAD_REQUEST)
+
         video_path = fs_video.path(file_name)                               # Extracción de la ruta hasta el video
-        source_points = get_corners(video_path)                             # Llamada a la función que extrae las esquinas del tablero de ajedrez
 
-        if not file_name or not source_points:                              # Si no se recibe el nombre del fichero o no se reciben las cuatro esquinas del tablero
-            return Response({"error: No se han proporcionado el nombre o las coordenadas"}, status=status.HTTP_400_BAD_REQUEST) # Se devuelve el mensaje y status 400
-
-        if not os.path.exists(video_path):                                  # Si la ruta hasta el fichero resulta que no lleva a ningun archivo:
-            return Response({"error: No se ha encontrado el video"}, status=status.HTTP_400_BAD_REQUEST)    # Devuelve el mensaje de error y status 400
+        if not os.path.exists(video_path):                                  # Si la ruta hasta el fichero no existe
+            return Response({"error": "No se ha encontrado el video."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            key_frames = extract_key_frames(video_path, source_points)                     # Extracción de los frames claves
+            # 1. Leer el primer frame para la detección de esquinas
+            first_frame = get_first_frame(video_path)
+            if first_frame is None:
+                return Response({"error": "No se pudo leer el video."}, status=status.HTTP_400_BAD_REQUEST)
 
-            if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de los frames claves
-                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Devuelve error y status 500
+            # 2. Detectar automáticamente las 4 esquinas del tablero (sin ventana de escritorio)
+            corners = auto_detect_board_corners(first_frame)
 
-            video_name = os.path.splitext(file_name)[0]                     # Extracción del nombre del video sin la extensión
-            saved_frames = save_key_frames(key_frames, video_name)          # Guardado de los frames claves
+            # 3. Obtener el frame inicial transformado como referencia para la detección FEN
+            initial_frame = get_initial_board_frame(video_path, corners)
 
-            if not saved_frames:                                            # Comprobación de los frames claves
-                return Response({'error': f"Fallo interno durante el guardado de los frames"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    # Devuelve error y status 500
+            # 4. Extraer los frames clave del video (posiciones estables tras cada movimiento)
+            video_name = os.path.splitext(file_name)[0]                     # Nombre del video sin extensión
+            key_frames = extract_key_frames(video_path, corners)            # Extracción de frames clave
 
-            return Response({"message": "Analisis de frames completado", "total_frames": len(saved_frames), "analisis_id": video_name}, status=status.HTTP_200_OK)  # Si todo termina bien, devuelve mensaje de éxito y status 200
+            if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de errores
+                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        except Exception as e:    # Si salta la excepción
-            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) # Notifica del fallo y status 500
+            if not key_frames:                                              # Si no se detectaron movimientos
+                return Response({"error": "No se detectaron movimientos en el video."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 5. Guardar los frames clave
+            save_key_frames(key_frames, video_name)
+
+            # 6. Generar la secuencia de FENs comparando celdas entre frames consecutivos
+            all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
+            fens = frames_to_fens(all_frames)                               # Generación de FENs
+            save_fens(fens, video_name)                                     # Persistencia en disco
+
+            return Response({
+                "message": "Análisis completado con éxito.",
+                "total_frames": len(key_frames),
+                "analisis_id": video_name,
+                "total_fens": len(fens),
+                "fens": fens,
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:                                              # Si salta la excepción
+            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class VideoListView(APIView):
 
@@ -187,6 +213,21 @@ class AnalysisChainView(APIView):
             results.append({'initial_fen': fen.strip(), 'chain': chain})
 
         return Response({'results': results}, status=status.HTTP_200_OK)
+
+
+class FensView(APIView):
+
+    # GET: Devuelve la secuencia de FENs de una partida ya analizada
+    @staticmethod
+    def get(request, analysis_id):
+        fens = load_fens(analysis_id)
+        if fens is None:
+            return Response({"error": "No se encontraron FENs para este análisis."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            "analisis_id": analysis_id,
+            "total_fens": len(fens),
+            "fens": fens,
+        }, status=status.HTTP_200_OK)
 
 
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
