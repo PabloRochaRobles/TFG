@@ -10,6 +10,7 @@ export const translations = {
       lightMode: 'Modo Claro',
       darkMode: 'Modo Oscuro',
       language: 'Idioma',
+      calibrate: 'Calibrar tablero',
     },
     tabs: {
       home: 'Inicio',
@@ -163,6 +164,21 @@ export const translations = {
       tip4Label: 'Consejo 4:',
       tip4: 'Mantenga las manos fuera del encuadre y realice movimientos claros.',
     },
+    calibrate: {
+      title: 'Calibrar tablero',
+      instructions:
+        'Selecciona un vídeo, luego toca las 4 esquinas del tablero en orden:\n1. Superior-Izq (a1) · 2. Superior-Der (a8) · 3. Inferior-Der (h8) · 4. Inferior-Izq (h1)\n\nLa calibración se guarda y se aplica a todos los análisis futuros.',
+      selectVideo: 'Elige un vídeo para calibrar',
+      noVideos: 'No hay vídeos disponibles. Sube un vídeo primero.',
+      tapCorner: 'Toca la esquina:',
+      allSelected: 'Las 4 esquinas están marcadas. Guarda la calibración.',
+      undo: 'Deshacer',
+      reset: 'Reiniciar',
+      save: 'Guardar calibración',
+      saved: 'Guardado',
+      savedTitle: 'Calibración guardada',
+      savedMessage: 'Las esquinas del tablero se usarán en todos los análisis futuros.',
+    },
   },
 
   en: {
@@ -176,6 +192,7 @@ export const translations = {
       lightMode: 'Light Mode',
       darkMode: 'Dark Mode',
       language: 'Language',
+      calibrate: 'Calibrate Board',
     },
     tabs: {
       home: 'Home',
@@ -326,6 +343,21 @@ export const translations = {
       tip3: 'Position the camera from a frontal and elevated position that allows you to clearly distinguish the pieces on the board.',
       tip4Label: 'Tip 4:',
       tip4: 'Keep your hands out of frame and make clear movements.',
+    },
+    calibrate: {
+      title: 'Calibrate Board',
+      instructions:
+        'Select a video, then tap the 4 corners of the board in order:\n1. Top-Left (a1) · 2. Top-Right (a8) · 3. Bottom-Right (h8) · 4. Bottom-Left (h1)\n\nThe calibration is saved and applied to all future analyses.',
+      selectVideo: 'Choose a video to calibrate',
+      noVideos: 'No videos available. Upload a video first.',
+      tapCorner: 'Tap corner:',
+      allSelected: 'All 4 corners marked. Save the calibration.',
+      undo: 'Undo',
+      reset: 'Reset',
+      save: 'Save Calibration',
+      saved: 'Saved',
+      savedTitle: 'Calibration Saved',
+      savedMessage: 'Board corners will be used in all future analyses.',
     },
   },
 };

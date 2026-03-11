@@ -343,6 +343,7 @@ export default function DrawerLayout() {
     >
       <Drawer.Screen name="(tabs)" />
       <Drawer.Screen name="analysis" />
+      <Drawer.Screen name="calibrate" />
       <Drawer.Screen name="settings" />
       <Drawer.Screen name="about" />
     </Drawer>

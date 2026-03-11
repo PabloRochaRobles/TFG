@@ -11,16 +11,18 @@ from django.conf import settings
 from rest_framework.response import Response
 from rest_framework import status
 
-TEMP_VIDEOS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
-TEMP_FRAMES_LOCATION = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
-ENGINES_DIR          = os.path.join(settings.BASE_DIR, 'misc', 'engines')
+TEMP_VIDEOS_LOCATION  = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
+TEMP_FRAMES_LOCATION  = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
+ENGINES_DIR           = os.path.join(settings.BASE_DIR, 'misc', 'engines')
+DEBUG_LOCATION        = os.path.join(settings.MEDIA_ROOT, 'debug')   # Imágenes de diagnóstico
+FENS_LOCATION         = os.path.join(settings.MEDIA_ROOT, 'fens')
+CORNERS_CONFIG_PATH   = os.path.join(settings.MEDIA_ROOT, 'corners_config.json')  # Calibración manual
 
 NORMALIZED_SIZE = 1000
 PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
-CELL_CHANGE_THRESHOLD = 20          # Diferencia media de píxeles para considerar una celda cambiada
-FENS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'fens')
+CELL_CHANGE_THRESHOLD = 10          # Diferencia media de píxeles para considerar una celda cambiada
 
 # -----------------------------------------
 # Funciones de Manejo de Video
@@ -108,11 +110,16 @@ def get_corners(video_path):
 
 # Función que transforma el cómo se ve el tablero tras aplicarle el cambio de perspectiva arreglando que la imagen no se distorsione
 def get_matriz(coords):
-    destination_points = np.float32([                                   # Conjunto de coordenadas de destino
-        [0, NORMALIZED_SIZE - 1],                                           # Superior Izquierda
-        [NORMALIZED_SIZE - 1, NORMALIZED_SIZE - 1],                         # Inferior Derecha
-        [NORMALIZED_SIZE - 1, 0],                                           # Superior Derecha
-        [0, 0],                                                             # Inferior Izquierda
+    # coords llega en orden [TL, TR, BR, BL] (esquinas de la cámara desde el lado de las blancas).
+    # Se mapean a la orientación estándar de ajedrez: a8 arriba-izq, h8 arriba-der, h1 abajo-der, a1 abajo-izq.
+    # Con este mapeo, cell_index 0 (arr-izq) = a8 y cell_index 63 (abj-der) = h1,
+    # coincidiendo con cell_index_to_square(i) = chess.square(i%8, 7 - i//8).
+    N = NORMALIZED_SIZE - 1
+    destination_points = np.float32([
+        [0, 0  ],   # TL cámara → (0,0)   a8 del tablero (arriba-izquierda)
+        [N, 0  ],   # TR cámara → (N,0)   h8 del tablero (arriba-derecha)
+        [N, N  ],   # BR cámara → (N,N)   h1 del tablero (abajo-derecha)
+        [0, N  ],   # BL cámara → (0,N)   a1 del tablero (abajo-izquierda)
     ])
 
     mat = cv2.getPerspectiveTransform(coords, destination_points)       # Transformación de los puntos marcados por el usuario a los puntos de destino
@@ -207,14 +214,14 @@ def extract_key_frames(video_path, coords):
 
     # ── Umbrales ───────────────────────────────────────────────────────────────
     # Se usa diferencia entre frames consecutivos para detectar movimiento y estabilidad.
-    # Esto evita el bug de "referencia congelada": cuando la pieza llega a su nueva casilla
-    # la diff consecutiva cae a 0, aunque la diff con la referencia pre-movimiento sea alta.
-    # La diff con la referencia sólo se usa al final para confirmar que hubo un movimiento real
-    # (descarta falsas alarmas como pulsar el reloj o golpes sin mover pieza).
-    threshold_start     = 2000      # Píxeles distintos entre frames consecutivos para detectar inicio
-    threshold_end       = 600       # Píxeles distintos entre frames consecutivos para considerar estabilidad
-    stability_frames    = 20        # Frames consecutivos estables necesarios para guardar frame clave
-    min_change_from_ref = 5000      # Diff mínima contra referencia para confirmar movimiento real
+    # Vista lateral: las piezas son objetos 3D que se proyectan en el plano de la cámara,
+    # por lo que los diffs pueden ser más variables que desde una vista cenital.
+    threshold_start     = 1200      # Píxeles distintos entre frames consecutivos para detectar inicio
+    threshold_end       = 800       # Píxeles distintos entre frames consecutivos para considerar estabilidad
+    stability_frames    = 12        # Frames consecutivos estables necesarios para guardar frame clave
+    min_change_from_ref = 2000      # Diff mínima contra referencia para confirmar movimiento real
+    log_interval        = 300       # Cada cuántos frames imprimir estadísticas de diff
+    frame_count         = 0         # Contador de frames procesados
 
     mat   = get_matriz(coords)
     video = open_video(video_path)
@@ -232,6 +239,7 @@ def extract_key_frames(video_path, coords):
         if not ret:
             break
 
+        frame_count += 1
         frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
         blur_curr = process_image(frame_curr_warped)
 
@@ -240,10 +248,16 @@ def extract_key_frames(video_path, coords):
         _, consec_thresh = cv2.threshold(consec_diff, 15, 255, cv2.THRESH_BINARY)
         consec_area  = int(np.sum(consec_thresh > 0))
 
+        # Log periódico para calibrar umbrales: imprime el diff en reposo cada log_interval frames
+        if frame_count % log_interval == 0:
+            print(f"[FRAMES] frame={frame_count} consec_area={consec_area} "
+                  f"motion={motion_detected} key_frames={len(key_frames)}")
+
         if not motion_detected:
             if consec_area > threshold_start:                               # Inicio de movimiento detectado
                 motion_detected     = True
                 frames_since_motion = 0
+                print(f"[FRAMES] Movimiento iniciado en frame {frame_count} (consec_area={consec_area})")
             else:
                 # Actualización gradual del frame de referencia para compensar cambios de iluminación
                 blur_ref = cv2.addWeighted(blur_ref, 0.99, blur_curr, 0.01, 0)
@@ -261,8 +275,7 @@ def extract_key_frames(video_path, coords):
                 ref_area = int(np.sum(ref_thresh > 0))
 
                 if ref_area > min_change_from_ref:
-                    frame_rotate = cv2.rotate(frame_curr_warped, cv2.ROTATE_180)
-                    key_frames.append(frame_rotate)                         # Guardar frame clave
+                    key_frames.append(frame_curr_warped.copy())             # Guardar frame clave
                     blur_ref = blur_curr.copy()                             # Nueva referencia = posición actual
                     print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area})")
                 else:
@@ -275,6 +288,70 @@ def extract_key_frames(video_path, coords):
 
     video.release()
     return key_frames
+
+# -----------------------------------------
+# Utilidad de debug: guardado de imágenes de diagnóstico
+# -----------------------------------------
+
+def save_debug_image(name, image):
+    """
+    Guarda una imagen en media/debug/<name>.jpg para diagnóstico visual.
+    No lanza excepción si falla (el debug no debe interrumpir el análisis).
+    """
+    try:
+        os.makedirs(DEBUG_LOCATION, exist_ok=True)
+        path = os.path.join(DEBUG_LOCATION, f"{name}.jpg")
+        # cv2.imwrite falla silenciosamente en Windows con rutas que contienen caracteres
+        # no-ASCII (tildes, etc.). Se usa imencode + open() para evitarlo.
+        ret, buf = cv2.imencode('.jpg', image)
+        if ret:
+            with open(path, 'wb') as f:
+                f.write(buf.tobytes())
+            print(f"[DEBUG] Imagen guardada: {path}")
+        else:
+            print(f"[DEBUG] imencode falló para '{name}'")
+    except Exception as e:
+        print(f"[DEBUG] No se pudo guardar imagen de debug '{name}': {e}")
+
+
+# -----------------------------------------
+# Calibración manual de esquinas del tablero
+# -----------------------------------------
+
+def save_corners_config(corners_rel):
+    """
+    Guarda las 4 esquinas del tablero como coordenadas relativas [0-1] en CORNERS_CONFIG_PATH.
+    corners_rel: lista de 4 pares [[rx0,ry0], [rx1,ry1], [rx2,ry2], [rx3,ry3]]
+    Orden: [TL=a1, TR=a8, BR=h8, BL=h1] (orientación lateral estándar).
+    """
+    data = {'corners_rel': [[float(x), float(y)] for x, y in corners_rel]}
+    with open(CORNERS_CONFIG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    print(f"[CORNERS] Calibración guardada: {data['corners_rel']}")
+
+
+def load_corners_config(image_size):
+    """
+    Carga las esquinas guardadas y las escala al tamaño de imagen dado.
+    image_size: (width, height) del frame de vídeo.
+    Devuelve np.float32 con 4 esquinas en píxeles, o None si no hay config.
+    """
+    if not os.path.exists(CORNERS_CONFIG_PATH):
+        return None
+    try:
+        with open(CORNERS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        corners_rel = data.get('corners_rel')
+        if not corners_rel or len(corners_rel) != 4:
+            return None
+        w, h = image_size
+        corners = np.float32([[rx * w, ry * h] for rx, ry in corners_rel])
+        print(f"[CORNERS] Calibración cargada: {corners.tolist()}")
+        return corners
+    except Exception as e:
+        print(f"[CORNERS] Error cargando calibración: {e}")
+        return None
+
 
 # -----------------------------------------
 # Detección automática de esquinas del tablero
@@ -296,48 +373,151 @@ def auto_detect_board_corners(frame):
     """
     Detecta automáticamente las 4 esquinas exteriores del tablero de ajedrez.
     Devuelve float32 en orden [TL, TR, BR, BL] compatible con get_matriz().
-    Si la detección falla usa la imagen completa con margen del 2%.
+
+    POSICIÓN ESTÁNDAR DE GRABACIÓN (obligatoria para el mapeo correcto):
+      - Cámara elevada desde el LADO DEL REY (columna h), mirando hacia la columna a.
+      - Blancas a la IZQUIERDA de la imagen, negras a la DERECHA.
+      - El tablero debe ser visible en su totalidad.
+      TL=a1  TR=a8  BR=h8  BL=h1
+
+    Estrategias en orden de prioridad:
+      0. Calibración manual guardada (corners_config.json) — siempre tiene prioridad
+      1. findChessboardCorners (casillas vacías visibles)
+      2. Líneas de Hough (detecta la cuadrícula)
+      3. Canny + contorno convexo con CLAHE
+      4. Umbral adaptativo + contorno con CLAHE
+      5. Fallback: recorte central al 80%
     """
-    h, w     = frame.shape[:2]
-    gray     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    h, w   = frame.shape[:2]
+    gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    kernel = np.ones((5, 5), np.uint8)
+
+    def _save_corner_debug(corners_result, label):
+        """Dibuja las esquinas sobre el frame original y lo guarda en media/debug/."""
+        vis = frame.copy()
+        pts = corners_result.astype(int)
+        labels_pos = ['TL(a1)', 'TR(a8)', 'BR(h8)', 'BL(h1)']
+        colors     = [(0,255,0),(0,165,255),(0,0,255),(255,0,0)]
+        for pt, lbl, col in zip(pts, labels_pos, colors):
+            cv2.circle(vis, tuple(pt), 12, col, -1)
+            cv2.putText(vis, lbl, (pt[0]+14, pt[1]-8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, col, 2)
+        # Cuadrilátero
+        cv2.polylines(vis, [pts.reshape(-1,1,2)], True, (255,255,0), 3)
+        cv2.putText(vis, label, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 2)
+        save_debug_image("corners_detected", vis)
+
+    # --- Prioridad 0: Calibración manual guardada ---
+    stored = load_corners_config((w, h))
+    if stored is not None:
+        print("[CORNERS] Usando calibración manual guardada")
+        _save_corner_debug(stored, "calibracion manual")
+        return stored
+
+    # --- Estrategia 1: findChessboardCorners ---
+    # Funciona bien cuando al menos las casillas centrales del tablero son visibles.
+    small  = cv2.resize(gray, (640, 480))
+    sh, sw = small.shape[:2]
+    for pat in [(7, 7), (6, 6), (5, 5)]:
+        flags = (cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+                 | cv2.CALIB_CB_FAST_CHECK)
+        ret, pts = cv2.findChessboardCorners(small, pat, flags)
+        if ret:
+            pts = pts.reshape(pat[1], pat[0], 2) * np.float32([w / sw, h / sh])
+            nr, nc = pat[1], pat[0]
+            dx = (pts[0, -1] - pts[0, 0]) / (nc - 1)
+            dy = (pts[-1, 0] - pts[0, 0]) / (nr - 1)
+            tl = np.clip(pts[0,  0] - dx - dy, [0, 0], [w - 1, h - 1])
+            tr = np.clip(pts[0, -1] + dx - dy, [0, 0], [w - 1, h - 1])
+            br = np.clip(pts[-1,-1] + dx + dy, [0, 0], [w - 1, h - 1])
+            bl = np.clip(pts[-1, 0] - dx + dy, [0, 0], [w - 1, h - 1])
+            result = np.float32([tl, tr, br, bl])
+            print(f"[CORNERS] Detectado con findChessboardCorners {pat}")
+            _save_corner_debug(result, f"findChessboardCorners {pat}")
+            return result
+
+    # Aplicar CLAHE para mejorar el contraste antes de las estrategias de borde
+    clahe    = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # --- Estrategia 1: Líneas de Hough ---
+    # Detecta las líneas horizontales y verticales de la cuadrícula del tablero.
+    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+    edges   = cv2.Canny(blurred, 20, 80)
+    min_votes = int(min(h, w) * 0.25)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=min_votes)
+    if lines is not None:
+        h_ys, v_xs = [], []
+        for line in lines:
+            rho, theta = line[0]
+            cos_t, sin_t = np.cos(theta), np.sin(theta)
+            if abs(sin_t) < 0.25 and abs(cos_t) > 1e-3:     # línea casi vertical
+                v_xs.append(rho / cos_t)
+            elif abs(cos_t) < 0.25 and abs(sin_t) > 1e-3:   # línea casi horizontal
+                h_ys.append(rho / sin_t)
+        if len(h_ys) >= 2 and len(v_xs) >= 2:
+            top, bottom = min(h_ys), max(h_ys)
+            left, right = min(v_xs), max(v_xs)
+            if (bottom - top) > h * 0.3 and (right - left) > w * 0.3:
+                left   = max(0.0, left);  right  = min(float(w - 1), right)
+                top    = max(0.0, top);   bottom = min(float(h - 1), bottom)
+                result = np.float32([[left, top], [right, top],
+                                     [right, bottom], [left, bottom]])
+                print("[CORNERS] Detectado con líneas de Hough")
+                _save_corner_debug(result, "Hough lines")
+                return result
+
+    # --- Estrategia 2 y 3: Canny/umbral adaptativo + contorno ---
     min_area = h * w * 0.05
-    kernel   = np.ones((5, 5), np.uint8)
 
     def find_quad(binary):
         cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in sorted(cnts, key=cv2.contourArea, reverse=True)[:20]:
+        for c in sorted(cnts, key=cv2.contourArea, reverse=True)[:15]:
             if cv2.contourArea(c) < min_area:
                 break
+            # Intentar approxPolyDP directamente
             peri = cv2.arcLength(c, True)
-            for eps in (0.01, 0.02, 0.03, 0.05):
+            for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
                 approx = cv2.approxPolyDP(c, eps * peri, True)
+                if len(approx) == 4:
+                    return np.float32([p[0] for p in approx])
+            # Fallback: casco convexo del contorno
+            hull = cv2.convexHull(c)
+            peri = cv2.arcLength(hull, True)
+            for eps in (0.02, 0.05, 0.10):
+                approx = cv2.approxPolyDP(hull, eps * peri, True)
                 if len(approx) == 4:
                     return np.float32([p[0] for p in approx])
         return None
 
-    # Estrategia 1: Canny + dilatación
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    edges   = cv2.Canny(blurred, 30, 100)
-    edges   = cv2.dilate(edges, kernel, iterations=2)
-    result  = find_quad(edges)
+    # Estrategia 2: Canny + dilatación con CLAHE
+    edges2 = cv2.Canny(cv2.GaussianBlur(enhanced, (7, 7), 0), 20, 80)
+    edges2 = cv2.dilate(edges2, kernel, iterations=2)
+    result = find_quad(edges2)
     if result is not None:
-        print("[CORNERS] Esquinas detectadas con Canny")
-        return order_corners(result)
+        result = order_corners(result)
+        print("[CORNERS] Detectado con Canny + contorno")
+        _save_corner_debug(result, "Canny contour")
+        return result
 
-    # Estrategia 2: Umbral adaptativo
-    blurred = cv2.GaussianBlur(gray, (11, 11), 0)
-    thresh  = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                    cv2.THRESH_BINARY_INV, 11, 2)
-    thresh  = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    result  = find_quad(thresh)
+    # Estrategia 3: Umbral adaptativo con CLAHE
+    thresh = cv2.adaptiveThreshold(cv2.GaussianBlur(enhanced, (11, 11), 0), 255,
+                                   cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV, 11, 2)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    result = find_quad(thresh)
     if result is not None:
-        print("[CORNERS] Esquinas detectadas con umbral adaptativo")
-        return order_corners(result)
+        result = order_corners(result)
+        print("[CORNERS] Detectado con umbral adaptativo")
+        _save_corner_debug(result, "adaptive threshold")
+        return result
 
-    # Fallback: imagen completa con pequeño margen
-    print("[CORNERS] Auto-detección falló, usando imagen completa")
-    mx, my = w * 0.02, h * 0.02
-    return np.float32([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]])
+    # Fallback: recorte central del 80% (margen 10% por lado)
+    print("[CORNERS] Auto-detección falló, usando recorte central (80%)")
+    mx, my = w * 0.10, h * 0.10
+    result = np.float32([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]])
+    _save_corner_debug(result, "FALLBACK 80% crop")
+    return result
 
 
 def get_first_frame(video_path):
@@ -352,15 +532,29 @@ def get_first_frame(video_path):
 
 def get_initial_board_frame(video_path, corners):
     """
-    Obtiene el primer frame del video con la transformación de perspectiva
-    y la rotación aplicadas (mismo proceso que los frames clave).
+    Obtiene el primer frame del video con la transformación de perspectiva aplicada
+    (mismo proceso que los frames clave). Guarda el resultado en media/debug/warped_initial.jpg.
     """
     frame = get_first_frame(video_path)
     if frame is None:
         return None
     mat    = get_matriz(corners)
     warped = cv2.warpPerspective(frame, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
-    return cv2.rotate(warped, cv2.ROTATE_180)
+
+    # Debug: dibujar la cuadrícula de las 64 celdas sobre el frame transformado
+    grid_vis = warped.copy()
+    cs = NORMALIZED_SIZE // 8
+    for i in range(9):
+        cv2.line(grid_vis, (i * cs, 0), (i * cs, NORMALIZED_SIZE), (0, 255, 0), 1)
+        cv2.line(grid_vis, (0, i * cs), (NORMALIZED_SIZE, i * cs), (0, 255, 0), 1)
+    # Etiquetar esquinas
+    corner_labels = {(0, 0): 'a1', (cs*7, 0): 'a8', (0, cs*7): 'h1', (cs*7, cs*7): 'h8'}
+    for (cx, cy), lbl in corner_labels.items():
+        cv2.putText(grid_vis, lbl, (cx + 4, cy + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+    save_debug_image("warped_initial", grid_vis)
+
+    return warped
 
 
 # -----------------------------------------
@@ -397,10 +591,25 @@ def get_changed_cells(frame_before, frame_after, threshold=CELL_CHANGE_THRESHOLD
 
 def cell_index_to_square(cell_index):
     """
-    Convierte índice de celda (0–63, fila a fila desde arriba-izquierda = a8)
-    en casilla de python-chess. Asume orientación estándar: blancas abajo.
+    Convierte índice de celda (0–63, fila a fila desde arriba-izquierda)
+    en casilla de python-chess para la orientación LATERAL estándar de grabación:
+
+        Posición de cámara:
+          - Cámara elevada desde el lado del rey (columna h), mirando hacia la columna a.
+          - Blancas a la IZQUIERDA, negras a la DERECHA en la imagen.
+          - Columna h cerca de la cámara → fila inferior de la imagen (fila 7).
+          - Columna a lejos de la cámara → fila superior de la imagen (fila 0).
+
+        Mapeo en la imagen normalizada (1000×1000):
+          Fila (i//8): 0=columna a, 7=columna h  →  archivo de ajedrez = i//8
+          Col  (i%8):  0=rango 1,  7=rango 8     →  rango de ajedrez  = i%8
+
+          cell  0 (fila 0, col 0) = a1  →  chess.A1  ✓
+          cell  7 (fila 0, col 7) = a8  →  chess.A8  ✓
+          cell 56 (fila 7, col 0) = h1  →  chess.H1  ✓
+          cell 63 (fila 7, col 7) = h8  →  chess.H8  ✓
     """
-    return chess.square(cell_index % 8, 7 - cell_index // 8)
+    return chess.square(cell_index // 8, cell_index % 8)
 
 
 def detect_move_from_squares(board, changed_squares):
@@ -450,40 +659,72 @@ def frames_to_fens(all_frames, initial_fen=None):
     if initial_fen is None:
         initial_fen = chess.STARTING_FEN
 
-    board = chess.Board(initial_fen)
-    fens  = [initial_fen]
+    board          = chess.Board(initial_fen)
+    fens           = [initial_fen]
+    consecutive_failures = 0          # Fallos consecutivos sin detectar movimiento
+    MAX_FAILURES   = 5                # Tras este nº de fallos seguidos se imprime aviso
 
     for i in range(len(all_frames) - 1):
         try:
             changed = get_changed_cells(all_frames[i], all_frames[i + 1])
-            print(f"[FEN] Frame {i}→{i+1}: {len(changed)} celdas cambiadas → índices {changed}")
+            squares = [cell_index_to_square(idx) for idx in changed]
+            print(f"[FEN] Frame {i}→{i+1}: {len(changed)} celdas cambiadas → "
+                  f"casillas {[chess.square_name(s) for s in squares]}")
 
             if not changed:
                 print(f"[FEN] Sin cambios detectados, manteniendo FEN anterior")
                 fens.append(board.fen())
+                consecutive_failures += 1
                 continue
 
-            squares = [cell_index_to_square(idx) for idx in changed]
-            move    = detect_move_from_squares(board, squares)
+            move = detect_move_from_squares(board, squares)
 
             if move:
                 san = board.san(move)
                 board.push(move)
+                fens.append(board.fen())
+                consecutive_failures = 0
                 print(f"[FEN] Movimiento detectado: {san} ({move.uci()})")
             else:
-                print(f"[FEN] No se pudo determinar el movimiento, manteniendo FEN")
-
-            fens.append(board.fen())
+                # Fallo al determinar el movimiento: intentar con umbral más bajo
+                changed_relaxed = get_changed_cells(all_frames[i], all_frames[i + 1],
+                                                    threshold=CELL_CHANGE_THRESHOLD // 2)
+                squares_relaxed = [cell_index_to_square(idx) for idx in changed_relaxed]
+                move2 = detect_move_from_squares(board, squares_relaxed)
+                if move2:
+                    san = board.san(move2)
+                    board.push(move2)
+                    fens.append(board.fen())
+                    consecutive_failures = 0
+                    print(f"[FEN] Movimiento detectado (umbral relajado): {san} ({move2.uci()})")
+                else:
+                    fens.append(board.fen())
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_FAILURES:
+                        print(f"[FEN] ⚠ {consecutive_failures} fallos consecutivos. "
+                              f"Comprueba media/debug/ para verificar la perspectiva del tablero.")
+                    else:
+                        print(f"[FEN] No se pudo determinar el movimiento (fallo #{consecutive_failures})")
 
         except Exception as e:
             print(f"[FEN] Error procesando frame {i}: {e}")
             fens.append(board.fen())
+            consecutive_failures += 1
 
     return fens
 
 
 def save_fens(fens, analysis_id):
-    """Guarda la secuencia de FENs en media/fens/<analysis_id>.json"""
+    """
+    Guarda la secuencia de FENs en media/fens/<analysis_id>.json asociada a un análisis previo. 
+    Crea el directorio si no existe.
+    
+    Parametros:
+        - fens: Lista de FENs a guardar.
+        - analysis_id: Identificador único del análisis para nombrar el archivo de FENs.
+
+    Devuelve la ruta del archivo de FENs guardado.
+    """
     os.makedirs(FENS_LOCATION, exist_ok=True)
     path = os.path.join(FENS_LOCATION, f"{analysis_id}.json")
     with open(path, 'w', encoding='utf-8') as f:
@@ -491,15 +732,36 @@ def save_fens(fens, analysis_id):
     print(f"[FEN] {len(fens)} FENs guardados en {path}")
     return path
 
-
 def load_fens(analysis_id):
-    """Carga la secuencia de FENs desde media/fens/<analysis_id>.json"""
+    """
+    Carga la secuencia de FENs desde media/fens/<analysis_id>.json asociada a un análisis previo. 
+    
+    Parametros:
+    - analysis_id: Identificador único del análisis que se usó para guardar las FENs.
+
+    Devuelve una lista de FENs o None si no se encuentra el archivo.
+    """
+
     path = os.path.join(FENS_LOCATION, f"{analysis_id}.json")
     if not os.path.exists(path):
         return None
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data.get('fens', [])
+
+
+def delete_fens(analysis_id):
+    """Elimina el archivo de FENs asociado a un analysis_id. Devuelve True si se borró, False si no existía."""
+    path = os.path.join(FENS_LOCATION, f"{analysis_id}.json")
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+            print(f"[DELETE] FENs {analysis_id}.json eliminados.")
+            return True
+        except Exception as e:
+            print(f"[DELETE] Error al eliminar FENs {analysis_id}.json: {e}")
+            return False
+    return False
 
 
 # -----------------------------------------

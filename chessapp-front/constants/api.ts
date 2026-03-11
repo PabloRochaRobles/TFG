@@ -26,14 +26,20 @@ export async function uploadVideo(videoUri: string, fileName: string): Promise<{
   return response.json();
 }
 
-export async function analyzeVideo(fileName: string): Promise<{ message: string; total_frames: number; analisis_id: string; total_fens: number; fens: string[] }> {
+export async function analyzeVideo(
+  fileName: string,
+  corners?: [number, number][]
+): Promise<{ message: string; total_frames: number; analisis_id: string; total_fens: number; fens: string[] }> {
+  const body: Record<string, unknown> = { video_file: fileName };
+  if (corners) body.corners = corners;
+
   const response = await fetch(`${API_BASE_URL}/api/partidas/analyze/`, {
     method: 'POST',
     headers: {
       ...HEADERS,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ video_file: fileName }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -66,4 +72,25 @@ export async function deleteVideo(fileName: string): Promise<void> {
   if (!response.ok) {
     throw new Error('Error al eliminar el vídeo');
   }
+}
+
+export function getFirstFrameUrl(fileName: string): string {
+  return `${API_BASE_URL}/api/partidas/first-frame/${encodeURIComponent(fileName)}/`;
+}
+
+export async function calibrateCorners(
+  corners: [number, number][]
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/partidas/calibrate/`, {
+    method: 'POST',
+    headers: { ...HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corners }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Error al guardar la calibración');
+  }
+
+  return response.json();
 }

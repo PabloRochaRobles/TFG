@@ -17,7 +17,8 @@ import chess
 from .services import (
     extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames,
     auto_detect_board_corners, get_first_frame, get_initial_board_frame,
-    frames_to_fens, save_fens, load_fens,
+    frames_to_fens, save_fens, load_fens, delete_fens,
+    save_corners_config,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
 )
 
@@ -74,8 +75,15 @@ class AnalyzeVideoView(APIView):
             if first_frame is None:
                 return Response({"error": "No se pudo leer el video."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 2. Detectar automáticamente las 4 esquinas del tablero (sin ventana de escritorio)
-            corners = auto_detect_board_corners(first_frame)
+            # 2. Usar esquinas manuales si se proporcionan; si no, auto-detectar
+            corners_raw = request.data.get('corners')
+            if corners_raw and len(corners_raw) == 4:
+                import numpy as np
+                h, w = first_frame.shape[:2]
+                corners = np.float32([[rx * w, ry * h] for rx, ry in corners_raw])
+                print(f"[CORNERS] Usando calibración manual del frontend: {corners.tolist()}")
+            else:
+                corners = auto_detect_board_corners(first_frame)
 
             # 3. Obtener el frame inicial transformado como referencia para la detección FEN
             initial_frame = get_initial_board_frame(video_path, corners)
@@ -215,6 +223,50 @@ class AnalysisChainView(APIView):
         return Response({'results': results}, status=status.HTTP_200_OK)
 
 
+class VideoFirstFrameView(APIView):
+    """GET: Devuelve el primer frame del vídeo como imagen JPEG para la pantalla de calibración."""
+
+    @staticmethod
+    def get(request, file_name):
+        import cv2 as _cv2
+        from django.http import HttpResponse as _HR
+
+        video_path = fs_video.path(file_name)
+        if not os.path.exists(video_path):
+            return Response({'error': 'Video no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        frame = get_first_frame(video_path)
+        if frame is None:
+            return Response({'error': 'No se pudo leer el frame.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ret, buf = _cv2.imencode('.jpg', frame, [_cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ret:
+            return Response({'error': 'Error al codificar el frame.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return _HR(buf.tobytes(), content_type='image/jpeg')
+
+
+class CalibrateCornersView(APIView):
+    """
+    POST: Guarda la calibración manual de las 4 esquinas del tablero.
+    Body: { corners: [[rx0,ry0],[rx1,ry1],[rx2,ry2],[rx3,ry3]] }
+    Coordenadas relativas [0-1] respecto al tamaño de imagen mostrado.
+    Orden: [TL=a1, TR=a8, BR=h8, BL=h1].
+    """
+
+    @staticmethod
+    def post(request):
+        corners = request.data.get('corners')
+        if not corners or len(corners) != 4:
+            return Response({'error': 'Se requieren exactamente 4 esquinas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            save_corners_config(corners)
+            return Response({'message': 'Calibración guardada correctamente.'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class FensView(APIView):
 
     # GET: Devuelve la secuencia de FENs de una partida ya analizada
@@ -241,6 +293,8 @@ def delete_video_and_frames(request, file_name):
     if not ok:                                                                                                          # Si el borrado falló:
         return Response({"error": "No se encontró el video o no se pudo eliminar."}, status=status.HTTP_404_NOT_FOUND)  # Devuelve 404
 
-    delete_key_frames(os.path.splitext(file_name)[0])                                                                   # Borramos los frames claves asociados (si los tuviera creados)
+    analysis_id = os.path.splitext(file_name)[0]
+    delete_key_frames(analysis_id)   # Frames clave asociados (si existen)
+    delete_fens(analysis_id)         # FENs asociados (si existen)
 
     return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200

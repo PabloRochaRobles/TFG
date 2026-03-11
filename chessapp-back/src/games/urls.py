@@ -1,5 +1,9 @@
 from django.urls import path
-from .views import VideoUploadView, delete_video_and_frames, AnalyzeVideoView, VideoStreamView, VideoListView, AnalysisChainView, FensView
+from .views import (
+    VideoUploadView, delete_video_and_frames, AnalyzeVideoView, VideoStreamView,
+    VideoListView, AnalysisChainView, FensView,
+    VideoFirstFrameView, CalibrateCornersView,
+)
 
 urlpatterns = [
     path('upload/', VideoUploadView.as_view(), name='video_upload'),
@@ -9,4 +13,6 @@ urlpatterns = [
     path('list/', VideoListView.as_view(), name='video_list'),
     path('analysis-chain/', AnalysisChainView.as_view(), name='analysis_chain'),
     path('fens/<str:analysis_id>/', FensView.as_view(), name='fens_get'),
+    path('first-frame/<str:file_name>/', VideoFirstFrameView.as_view(), name='first_frame'),
+    path('calibrate/', CalibrateCornersView.as_view(), name='calibrate_corners'),
 ]

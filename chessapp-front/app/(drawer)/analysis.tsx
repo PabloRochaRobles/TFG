@@ -34,7 +34,7 @@ type Phase = 'analyzing' | 'done' | 'error';
 export default function AnalysisScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const { file } = useLocalSearchParams<{ file: string }>();
+  const { file, corners: cornersParam } = useLocalSearchParams<{ file: string; corners?: string }>();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
   const t = useTranslation();
@@ -55,7 +55,8 @@ export default function AnalysisScreen() {
     try {
       setPhase('analyzing');
       setCurrentMove(0);
-      const result = await analyzeVideo(file as string);
+      const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
+      const result = await analyzeVideo(file as string, corners);
       setTotalFrames(result.total_frames);
       setAnalysisId(result.analisis_id);
       setFens(result.fens ?? []);

@@ -156,10 +156,10 @@ export default function UploadScreen() {
               </TouchableOpacity>
               {phase === 'uploaded' ? (
                 <TouchableOpacity
-                  style={[styles.analyzeButton, { backgroundColor: '#27ae60' }]}
-                  onPress={() => router.push({ pathname: '/(drawer)/analysis', params: { file: savedFileName } })}
+                  style={[styles.analyzeButton, { backgroundColor: '#3b82f6' }]}
+                  onPress={() => router.push({ pathname: '/(drawer)/calibrate', params: { file: savedFileName } })}
                 >
-                  <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>{t.upload.analyzeGame}</Text>
+                  <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>{t.drawer.calibrate}</Text>
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity
