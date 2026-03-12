@@ -5,7 +5,7 @@ import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { uploadVideo } from '@/constants/api';
@@ -20,6 +20,7 @@ export default function UploadScreen() {
   const [videoFileName, setVideoFileName] = useState<string | null>(null);
   const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
+  const [uploadProgress, setUploadProgress] = useState(0);
   const navigation = useNavigation();
   const router = useRouter();
   const { cameraUri } = useLocalSearchParams<{ cameraUri?: string }>();
@@ -76,7 +77,8 @@ export default function UploadScreen() {
 
     try {
       setPhase('uploading');
-      const uploadResult = await uploadVideo(videoUri, videoFileName);
+      setUploadProgress(0);
+      const uploadResult = await uploadVideo(videoUri, videoFileName, setUploadProgress);
       setSavedFileName(uploadResult.file);
       setPhase('uploaded');
     } catch (err: any) {
@@ -140,8 +142,12 @@ export default function UploadScreen() {
           {/* Estado de carga */}
           {isLoading && (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.text }]}>{t.upload.uploading}</Text>
+              <Text style={[styles.loadingText, { color: colors.text }]}>
+                {t.upload.uploading} {uploadProgress}%
+              </Text>
+              <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${uploadProgress}%` }]} />
+              </View>
             </View>
           )}
 
@@ -228,12 +234,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   loadingContainer: {
-    alignItems: 'center',
     gap: 10,
     marginBottom: 20,
   },
   loadingText: {
     fontSize: 16,
+    textAlign: 'center',
+  },
+  progressTrack: {
+    height: 10,
+    borderRadius: 5,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 5,
   },
   resultBox: {
     borderRadius: 15,

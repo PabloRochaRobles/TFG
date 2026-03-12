@@ -1,11 +1,11 @@
-import { analyzeVideo } from '@/constants/api';
+import { analyzeVideo, getAnalysisProgress } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Clipboard, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
@@ -44,6 +44,8 @@ export default function AnalysisScreen() {
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [fens, setFens] = useState<string[]>([]);
   const [currentMove, setCurrentMove] = useState(0);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
@@ -55,16 +57,34 @@ export default function AnalysisScreen() {
     try {
       setPhase('analyzing');
       setCurrentMove(0);
+      setAnalysisProgress(0);
+
+      // Inicia el polling del progreso cada 800ms
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        const pct = await getAnalysisProgress(file as string);
+        setAnalysisProgress(pct);
+      }, 800);
+
       const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
       const result = await analyzeVideo(file as string, corners);
+
+      clearInterval(pollRef.current!);
+      pollRef.current = null;
+      setAnalysisProgress(100);
+
       setTotalFrames(result.total_frames);
       setAnalysisId(result.analisis_id);
       setFens(result.fens ?? []);
       setPhase('done');
     } catch (err: any) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       setPhase('error');
     }
   };
+
+  // Limpia el intervalo si el componente se desmonta durante el análisis
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const copyAnalysisId = () => {
     if (!analysisId) return;
@@ -109,8 +129,12 @@ export default function AnalysisScreen() {
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.analyzing}</Text>
               <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                {t.analysis.extracting}
+                {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
               </Text>
+              <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${analysisProgress}%` }]} />
+              </View>
+              <Text style={[styles.progressPct, { color: colors.primary }]}>{analysisProgress}%</Text>
             </View>
           )}
 
@@ -314,6 +338,18 @@ const styles = StyleSheet.create({
   },
   statusTitle: { fontSize: 18, fontWeight: 'bold' },
   statusSub: { fontSize: 14, textAlign: 'center' },
+  progressTrack: {
+    height: 10,
+    borderRadius: 5,
+    overflow: 'hidden',
+    width: '100%',
+    marginTop: 4,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 5,
+  },
+  progressPct: { fontSize: 13, fontWeight: '700' },
   retryButton: {
     marginTop: 8,
     paddingHorizontal: 28,

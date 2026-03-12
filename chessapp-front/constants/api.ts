@@ -4,26 +4,45 @@ const HEADERS = {
   'ngrok-skip-browser-warning': 'true',
 };
 
-export async function uploadVideo(videoUri: string, fileName: string): Promise<{ file: string; id: string; message: string }> {
-  const formData = new FormData();
-  formData.append('video_file', {
-    uri: videoUri,
-    name: fileName,
-    type: 'video/mp4',
-  } as any);
+export function uploadVideo(
+  videoUri: string,
+  fileName: string,
+  onProgress?: (pct: number) => void
+): Promise<{ file: string; id: string; message: string }> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append('video_file', { uri: videoUri, name: fileName, type: 'video/mp4' } as any);
 
-  const response = await fetch(`${API_BASE_URL}/api/partidas/upload/`, {
-    method: 'POST',
-    headers: HEADERS,
-    body: formData,
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}/api/partidas/upload/`);
+    Object.entries(HEADERS).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || 'Error al subir el video'));
+      } catch {
+        reject(new Error('Respuesta inesperada del servidor'));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Error de red al subir el video'));
+    xhr.send(formData);
   });
+}
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Error al subir el video');
-  }
-
-  return response.json();
+export async function getAnalysisProgress(fileName: string): Promise<number> {
+  const response = await fetch(`${API_BASE_URL}/api/partidas/progress/${encodeURIComponent(fileName)}/`, {
+    headers: HEADERS,
+  });
+  if (!response.ok) return 0;
+  const data = await response.json();
+  return data.progress ?? 0;
 }
 
 export async function analyzeVideo(

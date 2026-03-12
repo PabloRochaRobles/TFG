@@ -25,6 +25,19 @@ VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 CELL_CHANGE_THRESHOLD = 10          # Diferencia media de píxeles para considerar una celda cambiada
 
 # -----------------------------------------
+# Progreso de análisis (por clave de vídeo)
+# -----------------------------------------
+_analysis_progress: dict = {}
+
+def set_progress(key: str, pct: int) -> None:
+    """Actualiza el progreso de análisis para la clave dada (0-100)."""
+    _analysis_progress[key] = min(100, max(0, pct))
+
+def get_progress(key: str) -> int:
+    """Devuelve el progreso actual para la clave dada (0-100)."""
+    return _analysis_progress.get(key, 0)
+
+# -----------------------------------------
 # Funciones de Manejo de Video
 # -----------------------------------------
 
@@ -205,7 +218,7 @@ def delete_key_frames(file_name):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)                                               # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imágenes.
-def extract_key_frames(video_path, coords):
+def extract_key_frames(video_path, coords, progress_key=None):
 
     # Variables de la función
     key_frames = []                 # Lista de los frames claves
@@ -225,6 +238,7 @@ def extract_key_frames(video_path, coords):
 
     mat   = get_matriz(coords)
     video = open_video(video_path)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) or 1           # Total de frames para el progreso
     ret, frame_ref = video.read()                                           # Obtención del primer frame
 
     if not ret:
@@ -240,6 +254,8 @@ def extract_key_frames(video_path, coords):
             break
 
         frame_count += 1
+        if progress_key:
+            set_progress(progress_key, int(frame_count / total_frames * 50))
         frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
         blur_curr = process_image(frame_curr_warped)
 
@@ -644,7 +660,7 @@ def detect_move_from_squares(board, changed_squares):
 # Generación y persistencia de FENs
 # -----------------------------------------
 
-def frames_to_fens(all_frames, initial_fen=None):
+def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
     """
     Convierte una secuencia de frames del tablero en una lista de FENs.
       all_frames[0]  → posición inicial (antes de cualquier movimiento)
@@ -664,7 +680,10 @@ def frames_to_fens(all_frames, initial_fen=None):
     consecutive_failures = 0          # Fallos consecutivos sin detectar movimiento
     MAX_FAILURES   = 5                # Tras este nº de fallos seguidos se imprime aviso
 
-    for i in range(len(all_frames) - 1):
+    total_steps = max(1, len(all_frames) - 1)
+    for i in range(total_steps):
+        if progress_key:
+            set_progress(progress_key, 50 + int(i / total_steps * 50))
         try:
             changed = get_changed_cells(all_frames[i], all_frames[i + 1])
             squares = [cell_index_to_square(idx) for idx in changed]

@@ -18,7 +18,7 @@ from .services import (
     extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames,
     auto_detect_board_corners, get_first_frame, get_initial_board_frame,
     frames_to_fens, save_fens, load_fens, delete_fens,
-    save_corners_config,
+    save_corners_config, set_progress, get_progress,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
 )
 
@@ -70,6 +70,8 @@ class AnalyzeVideoView(APIView):
             return Response({"error": "No se ha encontrado el video."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            set_progress(file_name, 0)
+
             # 1. Leer el primer frame para la detección de esquinas
             first_frame = get_first_frame(video_path)
             if first_frame is None:
@@ -90,7 +92,7 @@ class AnalyzeVideoView(APIView):
 
             # 4. Extraer los frames clave del video (posiciones estables tras cada movimiento)
             video_name = os.path.splitext(file_name)[0]                     # Nombre del video sin extensión
-            key_frames = extract_key_frames(video_path, corners)            # Extracción de frames clave
+            key_frames = extract_key_frames(video_path, corners, progress_key=file_name)  # Extracción de frames clave
 
             if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de errores
                 return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -103,7 +105,8 @@ class AnalyzeVideoView(APIView):
 
             # 6. Generar la secuencia de FENs comparando celdas entre frames consecutivos
             all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
-            fens = frames_to_fens(all_frames)                               # Generación de FENs
+            fens = frames_to_fens(all_frames, progress_key=file_name)       # Generación de FENs
+            set_progress(file_name, 100)
             save_fens(fens, video_name)                                     # Persistencia en disco
 
             return Response({
@@ -244,6 +247,14 @@ class VideoFirstFrameView(APIView):
             return Response({'error': 'Error al codificar el frame.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return _HR(buf.tobytes(), content_type='image/jpeg')
+
+
+class AnalysisProgressView(APIView):
+    """GET: Devuelve el progreso actual del análisis de un vídeo (0-100)."""
+
+    @staticmethod
+    def get(request, file_name):
+        return Response({'progress': get_progress(file_name)}, status=status.HTTP_200_OK)
 
 
 class CalibrateCornersView(APIView):
