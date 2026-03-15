@@ -2,3 +2,7 @@
 /misc/
 /media/
 /chessapp-back/misc
+*.jpg
+*.jpg
+*.json
+*.npz

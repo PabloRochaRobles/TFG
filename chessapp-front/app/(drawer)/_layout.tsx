@@ -28,7 +28,7 @@ function CustomDrawerContent(props: any) {
     <View style={[styles.drawerContainer, { backgroundColor: colors.card }]}>
       <DrawerContentScrollView {...props} contentContainerStyle={styles.scrollContent}>
         <DrawerItem
-          label="Chess Analyzer"
+          label=""
           icon={({ color, size }) => (
             <Ionicons name="menu" size={size} color={color} />
           )}

@@ -18,7 +18,7 @@ export function uploadVideo(
     Object.entries(HEADERS).forEach(([k, v]) => xhr.setRequestHeader(k, v));
 
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      if (e.lengthComputable && onProgress) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
     };
 
     xhr.onload = () => {

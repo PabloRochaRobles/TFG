@@ -123,16 +123,27 @@ def get_corners(video_path):
 
 # Función que transforma el cómo se ve el tablero tras aplicarle el cambio de perspectiva arreglando que la imagen no se distorsione
 def get_matriz(coords):
-    # coords llega en orden [TL, TR, BR, BL] (esquinas de la cámara desde el lado de las blancas).
-    # Se mapean a la orientación estándar de ajedrez: a8 arriba-izq, h8 arriba-der, h1 abajo-der, a1 abajo-izq.
-    # Con este mapeo, cell_index 0 (arr-izq) = a8 y cell_index 63 (abj-der) = h1,
-    # coincidiendo con cell_index_to_square(i) = chess.square(i%8, 7 - i//8).
+    # coords llega en orden [a1, a8, h8, h1] tal como los toca el usuario en la calibración.
+    # Orientación de la imagen tal como la ve la cámara lateral (blancas a la izquierda):
+    #   a1 = arriba-izquierda,  a8 = arriba-derecha
+    #   h1 = abajo-izquierda,   h8 = abajo-derecha
+    #
+    # Mapeo de destino en la imagen normalizada (NORMALIZED_SIZE × NORMALIZED_SIZE):
+    #   coords[0] (a1) → (0, 0)   arriba-izquierda
+    #   coords[1] (a8) → (N, 0)   arriba-derecha
+    #   coords[2] (h8) → (N, N)   abajo-derecha
+    #   coords[3] (h1) → (0, N)   abajo-izquierda
+    #
+    # Ejes resultantes:
+    #   x (columnas, izq→der): rank 1 → rank 8  (rank_index = col = i%8)
+    #   y (filas, arr→abj):    file a → file h   (file_index  = row = i//8)
+    # → cell_index_to_square(i) = chess.square(i//8, i%8)
     N = NORMALIZED_SIZE - 1
     destination_points = np.float32([
-        [0, 0  ],   # TL cámara → (0,0)   a8 del tablero (arriba-izquierda)
-        [N, 0  ],   # TR cámara → (N,0)   h8 del tablero (arriba-derecha)
-        [N, N  ],   # BR cámara → (N,N)   h1 del tablero (abajo-derecha)
-        [0, N  ],   # BL cámara → (0,N)   a1 del tablero (abajo-izquierda)
+        [0, 0  ],   # coords[0] (a1) → arriba-izquierda
+        [N, 0  ],   # coords[1] (a8) → arriba-derecha
+        [N, N  ],   # coords[2] (h8) → abajo-derecha
+        [0, N  ],   # coords[3] (h1) → abajo-izquierda
     ])
 
     mat = cv2.getPerspectiveTransform(coords, destination_points)       # Transformación de los puntos marcados por el usuario a los puntos de destino
