@@ -1,7 +1,6 @@
 import json
 import os
 from collections import Counter
-from string import punctuation
 
 import cv2
 import chess
@@ -75,7 +74,7 @@ def process_image(frame):
     return blur                                                 # Devuelve el frame con estos filtros aplicados
 
 # Función que registra las coordenadas al hacer clic
-def click_event(event, x, y, flags, param):
+def click_event(event, x, y, _flags, param):
 
     global PUNTOS_ORIGEN
 
@@ -241,9 +240,9 @@ def extract_key_frames(video_path, coords, progress_key=None):
     # Vista lateral: las piezas son objetos 3D que se proyectan en el plano de la cámara,
     # por lo que los diffs pueden ser más variables que desde una vista cenital.
     threshold_start     = 1200      # Píxeles distintos entre frames consecutivos para detectar inicio
-    threshold_end       = 800       # Píxeles distintos entre frames consecutivos para considerar estabilidad
-    stability_frames    = 12        # Frames consecutivos estables necesarios para guardar frame clave
-    min_change_from_ref = 2000      # Diff mínima contra referencia para confirmar movimiento real
+    threshold_end       = 600       # Píxeles distintos entre frames consecutivos para considerar estabilidad (bajado de 800)
+    stability_frames    = 6         # Frames consecutivos estables necesarios para guardar frame clave (bajado de 12)
+    min_change_from_ref = 1500      # Diff mínima contra referencia para confirmar movimiento real (bajado de 2000)
     log_interval        = 300       # Cada cuántos frames imprimir estadísticas de diff
     frame_count         = 0         # Contador de frames procesados
 
@@ -557,6 +556,65 @@ def get_first_frame(video_path):
     return frame if ret else None
 
 
+def refine_warp_with_grid(warped):
+    """
+    Aplica una corrección secundaria al tablero ya transformado por perspectiva.
+
+    Estrategia:
+      - Detecta las líneas de la cuadrícula del tablero en la imagen warpeada
+        usando la transformada de Hough.
+      - A partir de las líneas horizontales y verticales más dominantes, estima
+        la posición real de cada borde de celda.
+      - Si la cuadrícula detectada difiere más de 30 px del ideal (celdas iguales),
+        aplica una segunda homografía para corregir la distorsión residual.
+
+    Devuelve la imagen corregida (o la original si la detección falla).
+    """
+    try:
+        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 90)
+        lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=80)
+        if lines is None or len(lines) < 6:
+            return warped
+
+        h_lines, v_lines = [], []
+        for line in lines[:60]:
+            rho, theta = line[0]
+            if abs(theta) < 0.2 or abs(theta - np.pi) < 0.2:       # casi vertical
+                v_lines.append(abs(rho))
+            elif abs(theta - np.pi / 2) < 0.2:                      # casi horizontal
+                h_lines.append(abs(rho))
+
+        h_lines = sorted(set(round(x / 20) * 20 for x in h_lines))
+        v_lines = sorted(set(round(x / 20) * 20 for x in v_lines))
+
+        # Necesitamos al menos las 4 líneas exteriores del tablero en cada eje
+        if len(h_lines) < 2 or len(v_lines) < 2:
+            return warped
+
+        # Esquinas detectadas del tablero en la imagen warpeada
+        x0, x1 = v_lines[0], v_lines[-1]
+        y0, y1 = h_lines[0], h_lines[-1]
+
+        # Si la desviación del borde ideal es menor de 30 px, no es necesario corregir
+        if (abs(x0) < 30 and abs(x1 - (NORMALIZED_SIZE - 1)) < 30 and
+                abs(y0) < 30 and abs(y1 - (NORMALIZED_SIZE - 1)) < 30):
+            return warped
+
+        N = float(NORMALIZED_SIZE - 1)
+        src = np.float32([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+        dst = np.float32([[0, 0], [N, 0], [N, N], [0, N]])
+        refine_mat = cv2.getPerspectiveTransform(src, dst)
+        refined = cv2.warpPerspective(warped, refine_mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+        print(f"[WARP] Corrección secundaria aplicada: bordes detectados "
+              f"x=[{x0:.0f},{x1:.0f}] y=[{y0:.0f},{y1:.0f}]")
+        return refined
+
+    except Exception as e:
+        print(f"[WARP] refine_warp_with_grid falló: {e}")
+        return warped
+
+
 def get_initial_board_frame(video_path, corners):
     """
     Obtiene el primer frame del video con la transformación de perspectiva aplicada
@@ -598,7 +656,14 @@ def get_changed_cells(frame_before, frame_after, threshold=CELL_CHANGE_THRESHOLD
     """
     Compara las 64 celdas entre dos frames y devuelve los índices de las
     celdas que cambiaron significativamente, ordenados por magnitud (mayor primero).
-    Devuelve como máximo 8 resultados para filtrar ruido.
+
+    Mejoras respecto a la versión anterior:
+    - Cada celda se normaliza por su brillo medio antes de comparar (elimina efecto
+      de cambios globales de iluminación que afectan a todas las celdas igual).
+    - Se resta la mediana de los diffs de todas las celdas (compensación de modo común):
+      si la luz cambia uniformemente, el diff de todas las celdas sube en la misma cantidad
+      y la mediana lo absorbe; sólo las celdas con movimiento real destacan por encima.
+    - Se limita a 6 resultados (en un movimiento normal se tocan 2 celdas; en enroque, 4).
     """
     def to_gray(img):
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
@@ -606,14 +671,57 @@ def get_changed_cells(frame_before, frame_after, threshold=CELL_CHANGE_THRESHOLD
     cells_b = get_board_cells(to_gray(frame_before))
     cells_a = get_board_cells(to_gray(frame_after))
 
+    raw_diffs = []
+    for cb, ca in zip(cells_b, cells_a):
+        cb_f = cb.astype(np.float32)
+        ca_f = ca.astype(np.float32)
+        # Normalizar por brillo medio de cada celda (independiente de iluminación global)
+        diff = float(np.mean(np.abs(
+            (ca_f - np.mean(ca_f)) - (cb_f - np.mean(cb_f))
+        )))
+        raw_diffs.append(diff)
+
+    # Compensar variación común de iluminación restando la mediana de todas las celdas
+    median_diff = float(np.median(raw_diffs))
     changes = []
-    for i, (cb, ca) in enumerate(zip(cells_b, cells_a)):
-        mean_diff = float(np.mean(cv2.absdiff(cb, ca)))
-        if mean_diff > threshold:
-            changes.append((i, mean_diff))
+    for i, d in enumerate(raw_diffs):
+        residual = d - median_diff
+        if residual > threshold:
+            changes.append((i, residual))
 
     changes.sort(key=lambda x: x[1], reverse=True)
-    return [idx for idx, _ in changes[:8]]
+    return [idx for idx, _ in changes[:6]]
+
+
+def classify_cells_occupation(frame_before, frame_after, changed_indices):
+    """
+    Para cada índice de celda cambiada, clasifica si la celda ganó (+1) o perdió (-1)
+    una pieza, midiendo la densidad de bordes (las piezas 3D generan más bordes que
+    una celda vacía de tablero).
+
+    Retorna un dict {cell_index: +1 | -1 | 0}.
+    """
+    def to_gray(img):
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+
+    def edge_density(cell):
+        return float(np.mean(cv2.Canny(cell, 30, 100)))
+
+    cells_b = get_board_cells(to_gray(frame_before))
+    cells_a = get_board_cells(to_gray(frame_after))
+
+    result = {}
+    for idx in changed_indices:
+        ed_b = edge_density(cells_b[idx])
+        ed_a = edge_density(cells_a[idx])
+        delta = ed_a - ed_b
+        if delta > 4:       # más bordes → pieza llegó
+            result[idx] = +1
+        elif delta < -4:    # menos bordes → pieza salió
+            result[idx] = -1
+        else:
+            result[idx] = 0
+    return result
 
 
 def cell_index_to_square(cell_index):
@@ -639,27 +747,54 @@ def cell_index_to_square(cell_index):
     return chess.square(cell_index // 8, cell_index % 8)
 
 
-def detect_move_from_squares(board, changed_squares):
+def detect_move_from_squares(board, changed_squares,
+                              frame_before=None, frame_after=None, changed_indices=None):
     """
     Dado el estado del tablero y las casillas que cambiaron, devuelve el
-    movimiento legal que mejor explica los cambios (máxima intersección).
-    Retorna None si ningún movimiento tiene al menos 2 casillas en común.
+    movimiento legal que mejor explica los cambios.
+
+    Estrategia en dos niveles:
+      1. Clasificación origen/destino: si se puede identificar qué celda perdió
+         una pieza (fuente) y cuál la recibió (destino), se busca directamente
+         el movimiento legal from_square→to_square.  Mucho más preciso que sólo
+         contar solapamiento.
+      2. Máximo solapamiento (fallback): si la clasificación no es concluyente,
+         se usa el método original de máxima intersección.
     """
     changed_set = set(changed_squares)
-    best_move, best_overlap = None, 0
-
     castling_extras = {
-        chess.G1: {chess.H1, chess.F1},   # Enroque corto blancas
-        chess.C1: {chess.A1, chess.D1},   # Enroque largo blancas
-        chess.G8: {chess.H8, chess.F8},   # Enroque corto negras
-        chess.C8: {chess.A8, chess.D8},   # Enroque largo negras
+        chess.G1: {chess.H1, chess.F1},
+        chess.C1: {chess.A1, chess.D1},
+        chess.G8: {chess.H8, chess.F8},
+        chess.C8: {chess.A8, chess.D8},
     }
 
+    # ── Nivel 1: clasificación origen / destino ──────────────────────────────
+    if frame_before is not None and frame_after is not None and changed_indices is not None:
+        classification = classify_cells_occupation(frame_before, frame_after, changed_indices)
+        sources = {cell_index_to_square(i) for i, c in classification.items() if c == -1}
+        dests   = {cell_index_to_square(i) for i, c in classification.items() if c == +1}
+
+        if sources and dests:
+            print(f"[FEN]   Clasificación → fuentes={[chess.square_name(s) for s in sources]} "
+                  f"destinos={[chess.square_name(d) for d in dests]}")
+            # Buscar movimiento legal que encaje exactamente
+            for move in board.legal_moves:
+                if move.from_square in sources and move.to_square in dests:
+                    return move
+            # Enroque: el rey puede no clasificarse correctamente por la torre
+            for move in board.legal_moves:
+                if board.is_castling(move):
+                    involved = {move.from_square, move.to_square} | castling_extras.get(move.to_square, set())
+                    if len(involved & changed_set) >= 3:
+                        return move
+
+    # ── Nivel 2: fallback por máximo solapamiento ────────────────────────────
+    best_move, best_overlap = None, 0
     for move in board.legal_moves:
         involved = {move.from_square, move.to_square}
         if board.is_castling(move):
             involved |= castling_extras.get(move.to_square, set())
-
         overlap = len(involved & changed_set)
         if overlap > best_overlap:
             best_overlap, best_move = overlap, move
@@ -670,6 +805,53 @@ def detect_move_from_squares(board, changed_squares):
 # -----------------------------------------
 # Generación y persistencia de FENs
 # -----------------------------------------
+
+def detect_two_moves(board, changed_squares):
+    """
+    Cuando se detectan demasiadas celdas cambiadas para ser un único movimiento
+    (>4 celdas), intenta encontrar dos movimientos legales consecutivos que juntos
+    expliquen los cambios observados.
+
+    Estrategia:
+      - Para cada movimiento legal posible como primer movimiento (move1),
+        comprueba cuántas de las celdas cambiadas cubre.
+      - Aplica move1 temporalmente y busca move2 que cubra el resto.
+      - Devuelve (move1, move2) si la cobertura combinada es suficiente, o None.
+
+    Complejidad: O(legal_moves²) ≈ 40×40 = 1600 iteraciones máx. → rápido.
+    """
+    changed_set = set(changed_squares)
+    if len(changed_set) < 3:
+        return None
+
+    castling_extras = {
+        chess.G1: {chess.H1, chess.F1},
+        chess.C1: {chess.A1, chess.D1},
+        chess.G8: {chess.H8, chess.F8},
+        chess.C8: {chess.A8, chess.D8},
+    }
+
+    for move1 in list(board.legal_moves):
+        inv1 = {move1.from_square, move1.to_square}
+        if board.is_castling(move1):
+            inv1 |= castling_extras.get(move1.to_square, set())
+        if not (inv1 & changed_set):
+            continue                          # move1 no toca ninguna celda cambiada
+
+        board.push(move1)
+        for move2 in list(board.legal_moves):
+            inv2 = {move2.from_square, move2.to_square}
+            if board.is_castling(move2):
+                inv2 |= castling_extras.get(move2.to_square, set())
+            combined = inv1 | inv2
+            # Aceptar si la unión cubre al menos len-1 celdas cambiadas
+            if len(combined & changed_set) >= max(3, len(changed_set) - 1):
+                board.pop()
+                return move1, move2
+        board.pop()
+
+    return None
+
 
 def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
     """
@@ -696,10 +878,17 @@ def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
         if progress_key:
             set_progress(progress_key, 50 + int(i / total_steps * 50))
         try:
-            changed = get_changed_cells(all_frames[i], all_frames[i + 1])
+            frame_a = all_frames[i]
+            frame_b = all_frames[i + 1]
+
+            changed = get_changed_cells(frame_a, frame_b)
             squares = [cell_index_to_square(idx) for idx in changed]
             print(f"[FEN] Frame {i}→{i+1}: {len(changed)} celdas cambiadas → "
                   f"casillas {[chess.square_name(s) for s in squares]}")
+
+            # Guardar debug de los 8 primeros pares para inspección visual
+            if i < 8:
+                _save_frame_pair_debug(i, frame_a, frame_b, changed)
 
             if not changed:
                 print(f"[FEN] Sin cambios detectados, manteniendo FEN anterior")
@@ -707,32 +896,54 @@ def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
                 consecutive_failures += 1
                 continue
 
-            move = detect_move_from_squares(board, squares)
+            # ── Detección de doble movimiento ────────────────────────────────
+            # Si hay >4 celdas cambiadas y no es un enroque, es probable que el frame
+            # capturado ya contenga 2 movimientos (jugadas muy rápidas sin pausa intermedia).
+            if len(changed) > 4:
+                two = detect_two_moves(board, squares)
+                if two:
+                    m1, m2 = two
+                    san1 = board.san(m1)
+                    board.push(m1)
+                    fens.append(board.fen())            # FEN intermedio (tras mov 1)
+                    san2 = board.san(m2)
+                    board.push(m2)
+                    fens.append(board.fen())            # FEN final (tras mov 2)
+                    consecutive_failures = 0
+                    print(f"[FEN] ✓ Doble movimiento detectado: {san1} + {san2}")
+                    continue
+
+            # ── Detección de movimiento simple ────────────────────────────────
+            move = detect_move_from_squares(board, squares,
+                                            frame_before=frame_a, frame_after=frame_b,
+                                            changed_indices=changed)
 
             if move:
                 san = board.san(move)
                 board.push(move)
                 fens.append(board.fen())
                 consecutive_failures = 0
-                print(f"[FEN] Movimiento detectado: {san} ({move.uci()})")
+                print(f"[FEN] ✓ Movimiento detectado: {san} ({move.uci()})")
             else:
-                # Fallo al determinar el movimiento: intentar con umbral más bajo
-                changed_relaxed = get_changed_cells(all_frames[i], all_frames[i + 1],
-                                                    threshold=CELL_CHANGE_THRESHOLD // 2)
-                squares_relaxed = [cell_index_to_square(idx) for idx in changed_relaxed]
-                move2 = detect_move_from_squares(board, squares_relaxed)
+                # Reintento con umbral más bajo (posible movimiento sutil)
+                changed_r = get_changed_cells(frame_a, frame_b,
+                                              threshold=CELL_CHANGE_THRESHOLD // 2)
+                squares_r = [cell_index_to_square(idx) for idx in changed_r]
+                move2 = detect_move_from_squares(board, squares_r,
+                                                 frame_before=frame_a, frame_after=frame_b,
+                                                 changed_indices=changed_r)
                 if move2:
                     san = board.san(move2)
                     board.push(move2)
                     fens.append(board.fen())
                     consecutive_failures = 0
-                    print(f"[FEN] Movimiento detectado (umbral relajado): {san} ({move2.uci()})")
+                    print(f"[FEN] ✓ Movimiento detectado (umbral relajado): {san} ({move2.uci()})")
                 else:
                     fens.append(board.fen())
                     consecutive_failures += 1
                     if consecutive_failures >= MAX_FAILURES:
-                        print(f"[FEN] ⚠ {consecutive_failures} fallos consecutivos. "
-                              f"Comprueba media/debug/ para verificar la perspectiva del tablero.")
+                        print(f"[FEN] ⚠ {consecutive_failures} fallos consecutivos — "
+                              f"revisa media/debug/frame_pair_*.jpg")
                     else:
                         print(f"[FEN] No se pudo determinar el movimiento (fallo #{consecutive_failures})")
 
@@ -742,6 +953,33 @@ def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
             consecutive_failures += 1
 
     return fens
+
+
+def _save_frame_pair_debug(idx, frame_a, frame_b, changed_indices):
+    """
+    Guarda un collage con los dos frames y resalta las celdas detectadas como cambiadas.
+    Útil para depurar los primeros movimientos.
+    """
+    try:
+        cs = NORMALIZED_SIZE // 8
+        vis_a = frame_a.copy()
+        vis_b = frame_b.copy()
+        for ci in changed_indices:
+            r, c = ci // 8, ci % 8
+            x1, y1 = c * cs, r * cs
+            cv2.rectangle(vis_a, (x1, y1), (x1 + cs, y1 + cs), (0, 0, 255), 3)
+            cv2.rectangle(vis_b, (x1, y1), (x1 + cs, y1 + cs), (0, 255, 0), 3)
+        collage = np.hstack([
+            cv2.resize(vis_a, (500, 500)),
+            cv2.resize(vis_b, (500, 500)),
+        ])
+        cv2.putText(collage, f"Frame {idx} (antes)", (10, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(collage, f"Frame {idx+1} (despues)", (510, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        save_debug_image(f"frame_pair_{idx:02d}", collage)
+    except Exception as e:
+        print(f"[DEBUG] _save_frame_pair_debug falló: {e}")
 
 
 def save_fens(fens, analysis_id):

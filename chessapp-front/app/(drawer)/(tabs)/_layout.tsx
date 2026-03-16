@@ -36,7 +36,7 @@ export default function TabLayout() {
         options={{
           title: t.tabs.home,
           tabBarIcon: ({ color }) => (
-            <FontAwesome name="home" size={32} color={color} />
+            <FontAwesome name="home" size={30} color={color} />
           ),
         }}
       />
@@ -46,7 +46,7 @@ export default function TabLayout() {
         options={{
           title: t.tabs.upload,
           tabBarIcon: ({ color }) => (
-            <FontAwesome name="upload" size={32} color={color} />
+            <FontAwesome name="upload" size={30} color={color} />
           ),
         }}
       />
@@ -56,7 +56,7 @@ export default function TabLayout() {
         options={{
           title: t.tabs.camera,
           tabBarIcon: ({ color }) => (
-            <FontAwesome name="camera" size={32} color={color} />
+            <FontAwesome name="camera" size={28} color={color} />
           ),
         }}
       />
@@ -66,7 +66,7 @@ export default function TabLayout() {
         options={{
           title: t.tabs.library,
           tabBarIcon: ({ color }) => (
-            <FontAwesome name="bookmark" size={32} color={color} />
+            <FontAwesome name="bookmark" size={30} color={color} />
           ),
         }}
       />

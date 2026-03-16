@@ -1,21 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
   Image,
-  LayoutChangeEvent, // kept for imageContainer onLayout (future use)
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getFirstFrameUrl, uploadVideo } from '@/constants/api';
@@ -43,11 +44,40 @@ export default function UploadScreen() {
 
   // Estado de calibración
   const [corners, setCorners] = useState<Corner[]>([]);
-  const imageRef = useRef<View>(null);
-  const [imageLayout, setImageLayout] = useState({ width: 1, height: 1 });
-  // Dimensiones reales de la imagen mostrada dentro del contenedor (sin letterbox)
   const [imgDisplay, setImgDisplay] = useState({ offsetX: 0, offsetY: 0, displayW: 1, displayH: 1 });
   const screenWidth = Dimensions.get('window').width - 40;
+  const cw = screenWidth;
+  const ch = screenWidth * 0.65;
+
+  // Zoom / pan — shared values for gesture worklets
+  const scale    = useSharedValue(1);
+  const tx       = useSharedValue(0);
+  const ty       = useSharedValue(0);
+  const savedScale = useSharedValue(1);
+  const savedTx    = useSharedValue(0);
+  const savedTy    = useSharedValue(0);
+  // imgDisplay mirrored as shared values so they're accessible inside worklets
+  const imgOffX = useSharedValue(0);
+  const imgOffY = useSharedValue(0);
+  const imgDW   = useSharedValue(1);
+  const imgDH   = useSharedValue(1);
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  // Resetea la pantalla la próxima vez que se enfoque tras haber lanzado un análisis
+  const analysisStarted = useRef(false);
+  useFocusEffect(useCallback(() => {
+    if (analysisStarted.current) {
+      analysisStarted.current = false;
+      setVideoUri(null);
+      setVideoFileName(null);
+      setSavedFileName(null);
+      setPhase('idle');
+      setCorners([]);
+      scale.value = 1; tx.value = 0; ty.value = 0;
+      savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+      setZoomLevel(1);
+    }
+  }, []));
 
   const navigation = useNavigation();
   const router = useRouter();
@@ -120,49 +150,95 @@ export default function UploadScreen() {
     setSavedFileName(null);
     setPhase('idle');
     setCorners([]);
+    scale.value = 1; tx.value = 0; ty.value = 0;
+    savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+    setZoomLevel(1);
   };
 
   // ── Calibración ────────────────────────────────────────────────────────────
-  const handleImageLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setImageLayout({ width, height });
-  };
 
   // Calcula el área real de la imagen corrigiendo el letterbox de resizeMode="contain"
   const handleImageLoad = (e: any) => {
     const { width: natW, height: natH } = e.nativeEvent.source;
-    const contW = screenWidth;
-    const contH = screenWidth * 0.65;
     const imgRatio = natW / natH;
-    const contRatio = contW / contH;
-    let displayW: number, displayH: number;
-    if (imgRatio > contRatio) {
-      displayW = contW;
-      displayH = contW / imgRatio;
-    } else {
-      displayH = contH;
-      displayW = contH * imgRatio;
-    }
-    const offsetX = (contW - displayW) / 2;
-    const offsetY = (contH - displayH) / 2;
-    setImgDisplay({ offsetX, offsetY, displayW, displayH });
+    const contRatio = cw / ch;
+    let dW: number, dH: number;
+    if (imgRatio > contRatio) { dW = cw; dH = cw / imgRatio; }
+    else                       { dH = ch; dW = ch * imgRatio; }
+    const oX = (cw - dW) / 2;
+    const oY = (ch - dH) / 2;
+    setImgDisplay({ offsetX: oX, offsetY: oY, displayW: dW, displayH: dH });
+    // Also update shared values for worklet access
+    imgOffX.value = oX; imgOffY.value = oY;
+    imgDW.value = dW;   imgDH.value = dH;
   };
 
-  const handleImageTouch = (e: any) => {
-    if (corners.length >= 4) return;
-    const { locationX, locationY } = e.nativeEvent;
-    // Corregir offset del letterbox
-    const ix = locationX - imgDisplay.offsetX;
-    const iy = locationY - imgDisplay.offsetY;
-    // Ignorar toques fuera de la imagen real
-    if (ix < 0 || iy < 0 || ix > imgDisplay.displayW || iy > imgDisplay.displayH) return;
-    const rx = ix / imgDisplay.displayW;
-    const ry = iy / imgDisplay.displayH;
-    setCorners(prev => [...prev, [rx, ry]]);
+  const addCorner = (rx: number, ry: number) => {
+    setCorners(prev => (prev.length >= 4 ? prev : [...prev, [rx, ry]]));
   };
+
+  const resetZoom = () => {
+    scale.value = withSpring(1);
+    tx.value    = withSpring(0);
+    ty.value    = withSpring(0);
+    savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+    setZoomLevel(1);
+  };
+
+  // ── Gestures ──
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.max(1, Math.min(6, savedScale.value * e.scale));
+    })
+    .onEnd(() => {
+      if (scale.value < 1.05) {
+        scale.value = withSpring(1); tx.value = withSpring(0); ty.value = withSpring(0);
+        savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+        runOnJS(setZoomLevel)(1);
+      } else {
+        savedScale.value = scale.value;
+        runOnJS(setZoomLevel)(scale.value);
+      }
+    });
+
+  const panGesture = Gesture.Pan()
+    .minDistance(8)
+    .onUpdate((e) => {
+      tx.value = savedTx.value + e.translationX;
+      ty.value = savedTy.value + e.translationY;
+    })
+    .onEnd(() => {
+      savedTx.value = tx.value;
+      savedTy.value = ty.value;
+    });
+
+  const tapGesture = Gesture.Tap().onEnd((e) => {
+    'worklet';
+    // Reverse the zoom/pan transform to get original image-space coordinates
+    const vx = (e.x - cw / 2 - tx.value) / scale.value + cw / 2;
+    const vy = (e.y - ch / 2 - ty.value) / scale.value + ch / 2;
+    const ix = vx - imgOffX.value;
+    const iy = vy - imgOffY.value;
+    if (ix < 0 || iy < 0 || ix > imgDW.value || iy > imgDH.value) return;
+    runOnJS(addCorner)(ix / imgDW.value, iy / imgDH.value);
+  });
+
+  const composedGesture = Gesture.Exclusive(
+    Gesture.Simultaneous(pinchGesture, panGesture),
+    tapGesture,
+  );
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: scale.value },
+      { translateX: tx.value },
+      { translateY: ty.value },
+    ],
+  }));
 
   const handleConfirmAnalysis = () => {
     if (corners.length !== 4 || !savedFileName) return;
+    analysisStarted.current = true;
     router.push({
       pathname: '/(drawer)/analysis',
       params: {
@@ -193,7 +269,10 @@ export default function UploadScreen() {
           </Text>
         </View>
 
-        <ScrollView contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}>
+        <ScrollView
+          scrollEnabled={phase !== 'calibrating'}
+          contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}
+        >
 
           {/* ── Fase de calibración ── */}
           {phase === 'calibrating' && frameUri && (
@@ -239,48 +318,57 @@ export default function UploadScreen() {
                 </Text>
               )}
 
-              {/* Imagen tocable */}
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={handleImageTouch}
-                style={styles.imageWrapper}
-              >
-                <View ref={imageRef} onLayout={handleImageLayout} style={styles.imageContainer}>
-                  <Image
-                    source={{
-                      uri: frameUri,
-                      headers: { 'ngrok-skip-browser-warning': 'true' },
-                    }}
-                    style={{ width: screenWidth, height: screenWidth * 0.65 }}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
-                  {/* Marcadores de esquinas — posicionados sobre el área real de la imagen */}
-                  {corners.map(([rx, ry], idx) => {
-                    const c = CORNER_ORDER[idx];
-                    return (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.marker,
-                          {
-                            left: imgDisplay.offsetX + rx * imgDisplay.displayW - 14,
-                            top:  imgDisplay.offsetY + ry * imgDisplay.displayH - 14,
-                            borderColor: c.color,
-                            backgroundColor: c.color + '44',
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.markerText, { color: c.color }]}>{idx + 1}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </TouchableOpacity>
+              {/* Imagen con zoom — GestureDetector envuelve el Animated.View */}
+              <View style={styles.imageWrapper}>
+                <GestureDetector gesture={composedGesture}>
+                  <Animated.View style={[styles.imageContainer, animatedStyle]}>
+                    <Image
+                      source={{
+                        uri: frameUri,
+                        headers: { 'ngrok-skip-browser-warning': 'true' },
+                      }}
+                      style={{ width: cw, height: ch }}
+                      resizeMode="contain"
+                      onLoad={handleImageLoad}
+                    />
+                    {/* Marcadores tipo cruceta — el centro coincide con el toque exacto */}
+                    {corners.map(([rx, ry], idx) => {
+                      const c = CORNER_ORDER[idx];
+                      const cx = imgDisplay.offsetX + rx * imgDisplay.displayW;
+                      const cy = imgDisplay.offsetY + ry * imgDisplay.displayH;
+                      return (
+                        <View key={idx} style={[styles.crosshair, { left: cx - 16, top: cy - 16 }]}>
+                          {/* Líneas de cruceta */}
+                          <View style={[styles.chHLine, { backgroundColor: c.color }]} />
+                          <View style={[styles.chVLine, { backgroundColor: c.color }]} />
+                          {/* Punto central */}
+                          <View style={[styles.chDot, { backgroundColor: c.color }]} />
+                          {/* Badge con número */}
+                          <View style={[styles.chBadge, { backgroundColor: c.color }]}>
+                            <Text style={styles.chBadgeText}>{idx + 1}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </Animated.View>
+                </GestureDetector>
+              </View>
+              <Text style={[styles.zoomHint, { color: colors.textSecondary }]}>
+                Pellizca para hacer zoom · Toca para marcar esquinas
+              </Text>
 
               {/* Botones secundarios */}
-              {corners.length > 0 && (
-                <View style={styles.calibrateActions}>
+              <View style={styles.calibrateActions}>
+                {zoomLevel > 1.05 && (
+                  <TouchableOpacity
+                    style={[styles.btnSecondary, { borderColor: colors.border }]}
+                    onPress={resetZoom}
+                  >
+                    <Ionicons name="scan-outline" size={16} color={colors.text} />
+                    <Text style={[styles.btnSecondaryText, { color: colors.text }]}>Zoom</Text>
+                  </TouchableOpacity>
+                )}
+                {corners.length > 0 && (
                   <TouchableOpacity
                     style={[styles.btnSecondary, { borderColor: colors.border }]}
                     onPress={() => setCorners(c => c.slice(0, -1))}
@@ -290,17 +378,19 @@ export default function UploadScreen() {
                       {t.upload.undoCorner}
                     </Text>
                   </TouchableOpacity>
+                )}
+                {corners.length > 0 && (
                   <TouchableOpacity
                     style={[styles.btnSecondary, { borderColor: colors.border }]}
-                    onPress={() => setCorners([])}
+                    onPress={() => { setCorners([]); resetZoom(); }}
                   >
                     <Ionicons name="refresh" size={16} color={colors.text} />
                     <Text style={[styles.btnSecondaryText, { color: colors.text }]}>
                       {t.upload.resetCorners}
                     </Text>
                   </TouchableOpacity>
-                </View>
-              )}
+                )}
+              </View>
 
               {/* Botón analizar */}
               {corners.length === 4 && (
@@ -314,6 +404,17 @@ export default function UploadScreen() {
                   </Text>
                 </TouchableOpacity>
               )}
+
+              {/* Descartar vídeo — siempre visible en calibración */}
+              <TouchableOpacity
+                style={[styles.discardButton, { borderColor: '#ef4444' }]}
+                onPress={handleReset}
+              >
+                <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                <Text style={[styles.discardButtonText, { color: '#ef4444' }]}>
+                  {t.upload.discard}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -371,11 +472,11 @@ export default function UploadScreen() {
                   {phase === 'uploaded' ? (
                     <TouchableOpacity
                       style={[styles.analyzeButton, { backgroundColor: colors.primary }]}
-                      onPress={() => { setCorners([]); setPhase('calibrating'); }}
+                      onPress={() => { setCorners([]); resetZoom(); setPhase('calibrating'); }}
                     >
                       <Ionicons name="scan" size={20} color="#fff" />
                       <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>
-                        {t.upload.analyzeGame}
+                        {t.upload.calibrateImage}
                       </Text>
                     </TouchableOpacity>
                   ) : (
@@ -404,6 +505,10 @@ export default function UploadScreen() {
                 <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
                   <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step3}</Text>
                   <Text style={[styles.stepDescription, { color: colors.text }]}>{t.upload.step3Text}</Text>
+                </View>
+                <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
+                  <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step4}</Text>
+                  <Text style={[styles.stepDescription, { color: colors.text }]}>{t.upload.step4Text}</Text>
                 </View>
               </View>
             </>
@@ -494,19 +599,26 @@ const styles = StyleSheet.create({
   },
   stepLabel: { fontSize: 12, fontWeight: '600' },
   nextHint: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
-  imageWrapper: {},
+  imageWrapper: { overflow: 'hidden', borderRadius: 8 },
+  zoomHint: { fontSize: 11, textAlign: 'center', marginTop: 4 },
   imageContainer: { position: 'relative', alignSelf: 'center' },
-  marker: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Marcador tipo cruceta
+  crosshair: { position: 'absolute', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  chHLine:   { position: 'absolute', width: 32, height: 1.5 },
+  chVLine:   { position: 'absolute', width: 1.5, height: 32 },
+  chDot:     { width: 5, height: 5, borderRadius: 2.5, zIndex: 2 },
+  chBadge:   {
+    position: 'absolute', top: -9, right: -9,
+    width: 15, height: 15, borderRadius: 7.5,
+    alignItems: 'center', justifyContent: 'center', zIndex: 3,
   },
-  markerText: { fontSize: 12, fontWeight: '800' },
-  calibrateActions: { flexDirection: 'row', gap: 10 },
+  chBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  calibrateActions: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+  discardButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, borderWidth: 1, borderRadius: 10, paddingVertical: 12,
+  },
+  discardButtonText: { fontSize: 14, fontWeight: '600' },
   btnSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
