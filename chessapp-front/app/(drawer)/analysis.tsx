@@ -6,13 +6,13 @@ import { DrawerActions } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Clipboard, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Clipboard, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 
 // Mapeo de letras FEN a símbolos Unicode de ajedrez
 const PIECE_SYMBOLS: Record<string, string> = {
-  K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘', P: '♙',
+  K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟',
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
 
@@ -193,7 +193,7 @@ export default function AnalysisScreen() {
                         return (
                           <View key={colIdx} style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}>
                             {piece !== '' && (
-                              <Text style={[styles.piece, { color: isWhitePiece ? '#fff' : '#1a1a1a', textShadowColor: isWhitePiece ? '#555' : '#ddd' }]}>
+                              <Text style={[styles.piece, { color: isWhitePiece ? '#F6F6F6' : '#1a1a1a', textShadowColor: isWhitePiece ? '#555' : '#ddd' }]}>
                                 {PIECE_SYMBOLS[piece] ?? ''}
                               </Text>
                             )}
@@ -286,6 +286,10 @@ export default function AnalysisScreen() {
     </>
   );
 }
+
+// Tamaño del tablero ajustado al múltiplo de 8 más cercano para evitar artefactos sub-píxel
+const BOARD_SIZE = Math.floor((Dimensions.get('window').width - 40 - 24) / 8) * 8;
+const CELL_SIZE  = BOARD_SIZE / 8;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -398,15 +402,15 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   chessBoard: {
-    width: '100%',
-    aspectRatio: 1,
+    width: BOARD_SIZE,
+    height: BOARD_SIZE,
     borderWidth: 2,
     borderColor: '#4b5563',
     borderRadius: 8,
     overflow: 'hidden',
   },
-  boardRow: { flex: 1, flexDirection: 'row' },
-  square: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  boardRow: { width: BOARD_SIZE, height: CELL_SIZE, flexDirection: 'row' },
+  square: { width: CELL_SIZE, height: CELL_SIZE, alignItems: 'center', justifyContent: 'center' },
   lightSquare: { backgroundColor: '#f0d9b5' },
   darkSquare: { backgroundColor: '#b58863' },
   piece: {
