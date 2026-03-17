@@ -454,7 +454,8 @@ export default function UploadScreen() {
                     {t.upload.uploading} {uploadProgress}%
                   </Text>
                   <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-                    <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${uploadProgress}%` }]} />
+                    <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: uploadProgress }]} />
+                    <View style={{ flex: 100 - uploadProgress }} />
                   </View>
                 </View>
               )}
@@ -555,8 +556,8 @@ const styles = StyleSheet.create({
   },
   loadingContainer: { gap: 10, marginBottom: 20 },
   loadingText: { fontSize: 16, textAlign: 'center' },
-  progressTrack: { height: 10, borderRadius: 5, overflow: 'hidden', width: '100%' },
-  progressFill: { height: '100%', borderRadius: 5 },
+  progressTrack: { height: 10, borderRadius: 5, overflow: 'hidden', width: '100%', flexDirection: 'row' },
+  progressFill: { height: 10, borderRadius: 5 },
   buttonRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   cancelButton: {
     flex: 1,

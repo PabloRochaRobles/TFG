@@ -97,6 +97,38 @@ export function getFirstFrameUrl(fileName: string): string {
   return `${API_BASE_URL}/api/partidas/first-frame/${encodeURIComponent(fileName)}/`;
 }
 
+// ── Tipos de análisis de motores ────────────────────────────────────────────
+export type EngineResult = { san: string; uci: string; score: number };
+export type ChainStep = {
+  step: number;
+  fen_before: string;
+  consensus_san: string;
+  consensus_uci: string;
+  fen_after: string;
+  full_agreement: boolean;
+  engines: { stockfish: EngineResult; obsidian: EngineResult; plentychess: EngineResult };
+};
+export type PositionAnalysis = { initial_fen: string; chain: ChainStep[] };
+
+export async function analysisChain(
+  fens: string[],
+  depth: number = 5
+): Promise<PositionAnalysis[]> {
+  const response = await fetch(`${API_BASE_URL}/api/partidas/analysis-chain/`, {
+    method: 'POST',
+    headers: { ...HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fens, depth }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Error al calcular las mejores jugadas');
+  }
+
+  const data = await response.json();
+  return data.results as PositionAnalysis[];
+}
+
 export async function calibrateCorners(
   corners: [number, number][]
 ): Promise<{ message: string }> {

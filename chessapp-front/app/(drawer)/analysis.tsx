@@ -1,4 +1,4 @@
-import { analyzeVideo, getAnalysisProgress } from '@/constants/api';
+import { analysisChain, analyzeVideo, getAnalysisProgress, PositionAnalysis } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -40,9 +40,11 @@ export default function AnalysisScreen() {
   const t = useTranslation();
 
   const [phase, setPhase] = useState<Phase>('analyzing');
+  const [analysisStep, setAnalysisStep] = useState<'video' | 'engine'>('video');
   const [totalFrames, setTotalFrames] = useState<number>(0);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [fens, setFens] = useState<string[]>([]);
+  const [engineAnalysis, setEngineAnalysis] = useState<PositionAnalysis[]>([]);
   const [currentMove, setCurrentMove] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -56,10 +58,12 @@ export default function AnalysisScreen() {
   const runAnalysis = async () => {
     try {
       setPhase('analyzing');
+      setAnalysisStep('video');
       setCurrentMove(0);
       setAnalysisProgress(0);
+      setEngineAnalysis([]);
 
-      // Inicia el polling del progreso cada 800ms
+      // Paso 1: procesar el vídeo y obtener los FENs
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         const pct = await getAnalysisProgress(file as string);
@@ -73,9 +77,20 @@ export default function AnalysisScreen() {
       pollRef.current = null;
       setAnalysisProgress(100);
 
+      const detectedFens = result.fens ?? [];
       setTotalFrames(result.total_frames);
       setAnalysisId(result.analisis_id);
-      setFens(result.fens ?? []);
+      setFens(detectedFens);
+
+      // Paso 2: calcular las mejores jugadas, un FEN por petición para evitar timeouts de red
+      setAnalysisStep('engine');
+      const engineResults: PositionAnalysis[] = [];
+      for (const fen of detectedFens) {
+        const result = await analysisChain([fen], 5);
+        if (result.length > 0) engineResults.push(result[0]);
+      }
+      setEngineAnalysis(engineResults);
+
       setPhase('done');
     } catch (err: any) {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -128,13 +143,22 @@ export default function AnalysisScreen() {
             <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.analyzing}</Text>
-              <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
-              </Text>
-              <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-                <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${analysisProgress}%` }]} />
-              </View>
-              <Text style={[styles.progressPct, { color: colors.primary }]}>{analysisProgress}%</Text>
+              {analysisStep === 'video' ? (
+                <>
+                  <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                    {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
+                  </Text>
+                  <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                    <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: analysisProgress }]} />
+                    <View style={{ flex: 100 - analysisProgress }} />
+                  </View>
+                  <Text style={[styles.progressPct, { color: colors.primary }]}>{analysisProgress}%</Text>
+                </>
+              ) : (
+                <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                  {t.analysis.calculatingMoves}
+                </Text>
+              )}
             </View>
           )}
 
@@ -245,37 +269,98 @@ export default function AnalysisScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Análisis de motores — pendiente */}
+              {/* Análisis de motores */}
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
                   {t.analysis.moveAnalysis}
                 </Text>
-                <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <FontAwesome5 name="chess-knight" size={32} color={colors.textSecondary} />
-                  <Text style={[styles.pendingTitle, { color: colors.text }]}>{t.analysis.comingSoon}</Text>
-                  <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
-                    {t.analysis.comingSoonText}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Leyenda de motores */}
-              <View style={[styles.legend, { backgroundColor: colors.card }]}>
-                <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>{t.analysis.analysisEngines}</Text>
-                <View style={styles.legendItems}>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
-                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>Stockfish 16</Text>
+                {engineAnalysis.length === 0 ? (
+                  <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <FontAwesome5 name="chess-knight" size={32} color={colors.textSecondary} />
+                    <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                      {t.analysis.noAnalysis}
+                    </Text>
                   </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
-                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>Obsidian</Text>
-                  </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-                    <Text style={[styles.legendText, { color: colors.textSecondary }]}>PlentyChess</Text>
-                  </View>
-                </View>
+                ) : (() => {
+                  const posAnalysis = engineAnalysis[currentMove];
+                  if (!posAnalysis) return (
+                    <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                        {t.analysis.noAnalysis}
+                      </Text>
+                    </View>
+                  );
+                  return (
+                    <View style={[styles.engineBox, { backgroundColor: colors.card }]}>
+                      {posAnalysis.chain.map((step) => (
+                        <View key={step.step} style={[styles.chainStep, { borderColor: colors.border }]}>
+                          {/* Número y jugada consenso */}
+                          <View style={styles.chainHeader}>
+                            <View style={[styles.stepBadge, { backgroundColor: colors.primaryLight }]}>
+                              <Text style={[styles.stepBadgeText, { color: colors.primary }]}>{step.step}</Text>
+                            </View>
+                            <Text style={[styles.consensusMove, { color: colors.text }]}>
+                              {step.consensus_san}
+                            </Text>
+                            <View style={[
+                              styles.agreementBadge,
+                              { backgroundColor: step.full_agreement ? '#dcfce7' : '#fef9c3' }
+                            ]}>
+                              <Text style={[
+                                styles.agreementText,
+                                { color: step.full_agreement ? '#16a34a' : '#a16207' }
+                              ]}>
+                                {step.full_agreement ? t.analysis.fullAgreement : t.analysis.partialAgreement}
+                              </Text>
+                            </View>
+                          </View>
+                          {/* Sugerencia de cada motor */}
+                          <View style={styles.enginesRow}>
+                            <View style={styles.engineEntry}>
+                              <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
+                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>SF</Text>
+                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.stockfish.san}</Text>
+                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
+                                {step.engines.stockfish.score > 0 ? '+' : ''}{step.engines.stockfish.score.toFixed(2)}
+                              </Text>
+                            </View>
+                            <View style={styles.engineEntry}>
+                              <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
+                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>Obs</Text>
+                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.obsidian.san}</Text>
+                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
+                                {step.engines.obsidian.score > 0 ? '+' : ''}{step.engines.obsidian.score.toFixed(2)}
+                              </Text>
+                            </View>
+                            <View style={styles.engineEntry}>
+                              <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>PC</Text>
+                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.plentychess.san}</Text>
+                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
+                                {step.engines.plentychess.score > 0 ? '+' : ''}{step.engines.plentychess.score.toFixed(2)}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      ))}
+                      {/* Leyenda motores */}
+                      <View style={[styles.legendInline, { borderTopColor: colors.border }]}>
+                        <View style={styles.legendItem}>
+                          <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
+                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Stockfish</Text>
+                        </View>
+                        <View style={styles.legendItem}>
+                          <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
+                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Obsidian</Text>
+                        </View>
+                        <View style={styles.legendItem}>
+                          <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>PlentyChess</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })()}
               </View>
             </>
           )}
@@ -343,6 +428,7 @@ const styles = StyleSheet.create({
   statusTitle: { fontSize: 18, fontWeight: 'bold' },
   statusSub: { fontSize: 14, textAlign: 'center' },
   progressTrack: {
+    flexDirection: 'row',
     height: 10,
     borderRadius: 5,
     overflow: 'hidden',
@@ -350,7 +436,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   progressFill: {
-    height: '100%',
+    height: 10,
     borderRadius: 5,
   },
   progressPct: { fontSize: 13, fontWeight: '700' },
@@ -481,6 +567,59 @@ const styles = StyleSheet.create({
   legendTitle: { fontSize: 14, fontWeight: '600', marginBottom: 10 },
   legendItems: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendDot: { width: 12, height: 12, borderRadius: 6 },
-  legendText: { fontSize: 13 },
+  legendDot: { width: 10, height: 10, borderRadius: 5 },
+  legendText: { fontSize: 12 },
+
+  // Motor de análisis
+  engineBox: {
+    borderRadius: 14,
+    padding: 12,
+    gap: 2,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  chainStep: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    gap: 6,
+  },
+  chainHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stepBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: { fontSize: 12, fontWeight: '700' },
+  consensusMove: { fontSize: 17, fontWeight: 'bold', flex: 1 },
+  agreementBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  agreementText: { fontSize: 11, fontWeight: '600' },
+  enginesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingLeft: 32,
+  },
+  engineEntry: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  engineName: { fontSize: 11, width: 26 },
+  engineMove: { fontSize: 13, fontWeight: '600', minWidth: 32 },
+  engineScore: { fontSize: 11 },
+  legendInline: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingTop: 10,
+    marginTop: 4,
+    borderTopWidth: 1,
+  },
 });

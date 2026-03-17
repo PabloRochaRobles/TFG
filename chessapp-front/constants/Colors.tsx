@@ -4,7 +4,7 @@ export const Colors = {
     card: '#F6F6F6',
     text: '#1f2937',
     textSecondary: '#6b7280',
-    primary: '#3bb82f6',
+    primary: '#3b82f6',
     primaryLight: '#eff6ff',
     border: '#e5e7eb',
     headerBg: '#3b82f6',

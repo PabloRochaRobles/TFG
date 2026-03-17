@@ -2,7 +2,6 @@ import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
@@ -47,13 +46,7 @@ export default function HomeScreen() {
 
         <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
           {/* Botón: Analizar nueva partida */}
-          <TouchableOpacity style={styles.mainButton} onPress={() => router.push('/upload')}>
-            <LinearGradient
-              colors={['#007AFF', '#8E54E9']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.gradientButton}
-            />
+          <TouchableOpacity style={[styles.mainButton, { backgroundColor: '#007AFF' }]} onPress={() => router.push('/upload')}>
             <View style={styles.buttonContent}>
               <FontAwesome5 name="chess" size={45} color="white" />
               <Text style={styles.buttonText}>{t.home.analyzeNewGame}</Text>
@@ -196,7 +189,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   solidButton: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#3cb18a',
   },
 
   // Sección última partida
