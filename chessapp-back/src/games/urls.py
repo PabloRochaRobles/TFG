@@ -3,6 +3,7 @@ from .views import (
     VideoUploadView, delete_video_and_frames, AnalyzeVideoView, VideoStreamView,
     VideoListView, AnalysisChainView, FensView,
     VideoFirstFrameView, CalibrateCornersView, AnalysisProgressView,
+    EngineAnalysisView,
 )
 
 urlpatterns = [
@@ -16,4 +17,6 @@ urlpatterns = [
     path('fens/<str:analysis_id>/', FensView.as_view(), name='fens_get'),
     path('first-frame/<str:file_name>/', VideoFirstFrameView.as_view(), name='first_frame'),
     path('calibrate/', CalibrateCornersView.as_view(), name='calibrate_corners'),
+    path('engine-analysis/', EngineAnalysisView.as_view(), name='engine_analysis_save'),
+    path('engine-analysis/<str:analysis_id>/', EngineAnalysisView.as_view(), name='engine_analysis_get'),
 ]

@@ -1,4 +1,4 @@
-import { analysisChain, analyzeVideo, getAnalysisProgress, PositionAnalysis } from '@/constants/api';
+import { analysisChain, analyzeVideo, getAnalysisProgress, getEngineAnalysis, saveEngineAnalysis, PositionAnalysis } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,44 @@ const PIECE_SYMBOLS: Record<string, string> = {
   K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟',
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
+
+// ── Helpers para el análisis de motores ─────────────────────────────────────
+
+type AgreementType = 'total' | 'mayoria' | 'desempate';
+
+function getAgreementType(step: import('@/constants/api').ChainStep): AgreementType {
+  if (step.full_agreement) return 'total';
+  const { stockfish: sf, obsidian: obs, plentychess: pc } = step.engines;
+  if (sf.san === obs.san || sf.san === pc.san || obs.san === pc.san) return 'mayoria';
+  return 'desempate';
+}
+
+/** Colores de los motores que están de acuerdo. */
+const ENGINE_COLORS = { stockfish: '#3b82f6', obsidian: '#8b5cf6', plentychess: '#10b981' };
+
+function getAgreementDots(step: import('@/constants/api').ChainStep): string[] {
+  if (step.full_agreement) return Object.values(ENGINE_COLORS);
+  const { stockfish: sf, obsidian: obs, plentychess: pc } = step.engines;
+  if (sf.san === obs.san) return [ENGINE_COLORS.stockfish, ENGINE_COLORS.obsidian];
+  if (sf.san === pc.san) return [ENGINE_COLORS.stockfish, ENGINE_COLORS.plentychess];
+  if (obs.san === pc.san) return [ENGINE_COLORS.obsidian, ENGINE_COLORS.plentychess];
+  return [ENGINE_COLORS.stockfish]; // desempate → Stockfish
+}
+
+/** Una sola puntuación en centipawns según las reglas de acuerdo. */
+function computeScore(step: import('@/constants/api').ChainStep): number {
+  const { stockfish: sf, obsidian: obs, plentychess: pc } = step.engines;
+  if (step.full_agreement) {
+    const sorted = [sf.score, obs.score, pc.score].sort((a, b) => a - b);
+    return sorted[1]; // mediana
+  }
+  if (sf.san === obs.san) return (sf.score + obs.score) / 2;
+  if (sf.san === pc.san)  return (sf.score + pc.score)  / 2;
+  if (obs.san === pc.san) return (obs.score + pc.score) / 2;
+  return sf.score; // desempate → Stockfish
+}
+
+// ── Tablero ──────────────────────────────────────────────────────────────────
 
 // Convierte la parte de posición de un FEN en una matriz 8×8 de letras de piezas
 function fenToBoard(fen: string): string[][] {
@@ -82,14 +120,21 @@ export default function AnalysisScreen() {
       setAnalysisId(result.analisis_id);
       setFens(detectedFens);
 
-      // Paso 2: calcular las mejores jugadas, un FEN por petición para evitar timeouts de red
+      // Paso 2: calcular las mejores jugadas (o cargar desde caché)
       setAnalysisStep('engine');
-      const engineResults: PositionAnalysis[] = [];
-      for (const fen of detectedFens) {
-        const result = await analysisChain([fen], 5);
-        if (result.length > 0) engineResults.push(result[0]);
+      const analysisId = result.analisis_id;
+      const cached = await getEngineAnalysis(analysisId);
+      if (cached) {
+        setEngineAnalysis(cached);
+      } else {
+        const engineResults: PositionAnalysis[] = [];
+        for (const fen of detectedFens) {
+          const step = await analysisChain([fen], 5);
+          if (step.length > 0) engineResults.push(step[0]);
+        }
+        setEngineAnalysis(engineResults);
+        saveEngineAnalysis(analysisId, engineResults); // fire-and-forget
       }
-      setEngineAnalysis(engineResults);
 
       setPhase('done');
     } catch (err: any) {
@@ -292,72 +337,48 @@ export default function AnalysisScreen() {
                   );
                   return (
                     <View style={[styles.engineBox, { backgroundColor: colors.card }]}>
-                      {posAnalysis.chain.map((step) => (
-                        <View key={step.step} style={[styles.chainStep, { borderColor: colors.border }]}>
-                          {/* Número y jugada consenso */}
-                          <View style={styles.chainHeader}>
-                            <View style={[styles.stepBadge, { backgroundColor: colors.primaryLight }]}>
-                              <Text style={[styles.stepBadgeText, { color: colors.primary }]}>{step.step}</Text>
-                            </View>
-                            <Text style={[styles.consensusMove, { color: colors.text }]}>
-                              {step.consensus_san}
-                            </Text>
-                            <View style={[
-                              styles.agreementBadge,
-                              { backgroundColor: step.full_agreement ? '#dcfce7' : '#fef9c3' }
-                            ]}>
-                              <Text style={[
-                                styles.agreementText,
-                                { color: step.full_agreement ? '#16a34a' : '#a16207' }
-                              ]}>
-                                {step.full_agreement ? t.analysis.fullAgreement : t.analysis.partialAgreement}
+                      {posAnalysis.chain.map((step) => {
+                        const agType  = getAgreementType(step);
+                        const dots    = getAgreementDots(step);
+                        const score   = computeScore(step);
+                        const scoreStr = (score > 0 ? '+' : '') + score.toFixed(2);
+                        const agLabel = agType === 'total'
+                          ? t.analysis.fullAgreement
+                          : agType === 'mayoria'
+                          ? t.analysis.majorityAgreement
+                          : t.analysis.tiebreaker;
+                        const agBg    = agType === 'total' ? '#dcfce7'
+                                      : agType === 'mayoria' ? '#fef9c3' : '#fee2e2';
+                        const agColor = agType === 'total' ? '#16a34a'
+                                      : agType === 'mayoria' ? '#a16207' : '#dc2626';
+                        return (
+                          <View key={step.step} style={[styles.chainStep, { borderColor: colors.border }]}>
+                            <View style={styles.chainRow}>
+                              {/* Número */}
+                              <View style={[styles.stepBadge, { backgroundColor: colors.primaryLight }]}>
+                                <Text style={[styles.stepBadgeText, { color: colors.primary }]}>{step.step}</Text>
+                              </View>
+                              {/* Jugada */}
+                              <Text style={[styles.consensusMove, { color: colors.text }]}>{step.consensus_san}</Text>
+                              {/* Etiqueta consenso + puntos de color */}
+                              <View style={styles.agreementCol}>
+                                <View style={[styles.agreementBadge, { backgroundColor: agBg }]}>
+                                  <Text style={[styles.agreementText, { color: agColor }]}>{agLabel}</Text>
+                                </View>
+                                <View style={styles.dotsRow}>
+                                  {dots.map((c, i) => (
+                                    <View key={i} style={[styles.engineDot, { backgroundColor: c }]} />
+                                  ))}
+                                </View>
+                              </View>
+                              {/* Puntuación única */}
+                              <Text style={[styles.scoreText, { color: score >= 0 ? '#16a34a' : '#dc2626' }]}>
+                                {scoreStr}
                               </Text>
                             </View>
                           </View>
-                          {/* Sugerencia de cada motor */}
-                          <View style={styles.enginesRow}>
-                            <View style={styles.engineEntry}>
-                              <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
-                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>SF</Text>
-                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.stockfish.san}</Text>
-                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
-                                {step.engines.stockfish.score > 0 ? '+' : ''}{step.engines.stockfish.score.toFixed(2)}
-                              </Text>
-                            </View>
-                            <View style={styles.engineEntry}>
-                              <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
-                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>Obs</Text>
-                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.obsidian.san}</Text>
-                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
-                                {step.engines.obsidian.score > 0 ? '+' : ''}{step.engines.obsidian.score.toFixed(2)}
-                              </Text>
-                            </View>
-                            <View style={styles.engineEntry}>
-                              <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-                              <Text style={[styles.engineName, { color: colors.textSecondary }]}>PC</Text>
-                              <Text style={[styles.engineMove, { color: colors.text }]}>{step.engines.plentychess.san}</Text>
-                              <Text style={[styles.engineScore, { color: colors.textSecondary }]}>
-                                {step.engines.plentychess.score > 0 ? '+' : ''}{step.engines.plentychess.score.toFixed(2)}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-                      ))}
-                      {/* Leyenda motores */}
-                      <View style={[styles.legendInline, { borderTopColor: colors.border }]}>
-                        <View style={styles.legendItem}>
-                          <View style={[styles.legendDot, { backgroundColor: '#3b82f6' }]} />
-                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Stockfish</Text>
-                        </View>
-                        <View style={styles.legendItem}>
-                          <View style={[styles.legendDot, { backgroundColor: '#8b5cf6' }]} />
-                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>Obsidian</Text>
-                        </View>
-                        <View style={styles.legendItem}>
-                          <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-                          <Text style={[styles.legendText, { color: colors.textSecondary }]}>PlentyChess</Text>
-                        </View>
-                      </View>
+                        );
+                      })}
                     </View>
                   );
                 })()}
@@ -582,11 +603,10 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   chainStep: {
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    gap: 6,
   },
-  chainHeader: {
+  chainRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -599,27 +619,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepBadgeText: { fontSize: 12, fontWeight: '700' },
-  consensusMove: { fontSize: 17, fontWeight: 'bold', flex: 1 },
-  agreementBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  agreementText: { fontSize: 11, fontWeight: '600' },
-  enginesRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingLeft: 32,
-  },
-  engineEntry: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  engineName: { fontSize: 11, width: 26 },
-  engineMove: { fontSize: 13, fontWeight: '600', minWidth: 32 },
-  engineScore: { fontSize: 11 },
-  legendInline: {
-    flexDirection: 'row',
-    gap: 16,
-    paddingTop: 10,
-    marginTop: 4,
-    borderTopWidth: 1,
-  },
+  consensusMove: { fontSize: 16, fontWeight: 'bold', flex: 1 },
+  agreementCol: { alignItems: 'center', gap: 4 },
+  agreementBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
+  agreementText: { fontSize: 10, fontWeight: '600' },
+  dotsRow: { flexDirection: 'row', gap: 4 },
+  engineDot: { width: 8, height: 8, borderRadius: 4 },
+  scoreText: { fontSize: 13, fontWeight: '700', minWidth: 42, textAlign: 'right' },
 });

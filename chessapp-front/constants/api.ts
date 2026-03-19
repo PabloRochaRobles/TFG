@@ -129,6 +129,24 @@ export async function analysisChain(
   return data.results as PositionAnalysis[];
 }
 
+export async function getEngineAnalysis(analysisId: string): Promise<PositionAnalysis[] | null> {
+  const response = await fetch(`${API_BASE_URL}/api/partidas/engine-analysis/${encodeURIComponent(analysisId)}/`, {
+    headers: HEADERS,
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) return null;
+  const data = await response.json();
+  return data.results as PositionAnalysis[];
+}
+
+export async function saveEngineAnalysis(analysisId: string, results: PositionAnalysis[]): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/partidas/engine-analysis/`, {
+    method: 'POST',
+    headers: { ...HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ analysis_id: analysisId, results }),
+  });
+}
+
 export async function calibrateCorners(
   corners: [number, number][]
 ): Promise<{ message: string }> {

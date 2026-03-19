@@ -19,6 +19,7 @@ from .services import (
     auto_detect_board_corners, get_first_frame, get_initial_board_frame,
     frames_to_fens, save_fens, load_fens, delete_fens,
     save_corners_config, set_progress, get_progress,
+    save_engine_analysis, load_engine_analysis, delete_engine_analysis,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
 )
 
@@ -70,6 +71,22 @@ class AnalyzeVideoView(APIView):
             return Response({"error": "No se ha encontrado el video."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            video_name = os.path.splitext(file_name)[0]
+
+            # 0. Si los FENs ya están en caché y no se proporcionan esquinas nuevas → devolver directamente
+            corners_raw = request.data.get('corners')
+            cached_fens = load_fens(video_name)
+            if cached_fens and not corners_raw:
+                set_progress(file_name, 100)
+                print(f"[CACHE] FENs ya existentes para {video_name}, devolviendo sin reprocesar.")
+                return Response({
+                    "message": "Análisis cargado desde caché.",
+                    "total_frames": len(cached_fens) - 1,
+                    "analisis_id": video_name,
+                    "total_fens": len(cached_fens),
+                    "fens": cached_fens,
+                }, status=status.HTTP_200_OK)
+
             set_progress(file_name, 0)
 
             # 1. Leer el primer frame para la detección de esquinas
@@ -91,7 +108,6 @@ class AnalyzeVideoView(APIView):
             initial_frame = get_initial_board_frame(video_path, corners)
 
             # 4. Extraer los frames clave del video (posiciones estables tras cada movimiento)
-            video_name = os.path.splitext(file_name)[0]                     # Nombre del video sin extensión
             key_frames = extract_key_frames(video_path, corners, progress_key=file_name)  # Extracción de frames clave
 
             if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de errores
@@ -293,6 +309,28 @@ class FensView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+
+class EngineAnalysisView(APIView):
+    """GET  /engine-analysis/<analysis_id>/  → devuelve análisis cacheado o 404
+       POST /engine-analysis/               → guarda análisis { analysis_id, results }"""
+
+    @staticmethod
+    def get(request, analysis_id):
+        results = load_engine_analysis(analysis_id)
+        if results is None:
+            return Response({"error": "No hay análisis de motores cacheado."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"analysis_id": analysis_id, "results": results}, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def post(request):
+        analysis_id = request.data.get('analysis_id')
+        results     = request.data.get('results')
+        if not analysis_id or results is None:
+            return Response({"error": "Faltan analysis_id o results."}, status=status.HTTP_400_BAD_REQUEST)
+        save_engine_analysis(analysis_id, results)
+        return Response({"message": "Análisis guardado."}, status=status.HTTP_200_OK)
+
+
 # DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
 def delete_video_and_frames(request, file_name):
@@ -305,7 +343,8 @@ def delete_video_and_frames(request, file_name):
         return Response({"error": "No se encontró el video o no se pudo eliminar."}, status=status.HTTP_404_NOT_FOUND)  # Devuelve 404
 
     analysis_id = os.path.splitext(file_name)[0]
-    delete_key_frames(analysis_id)   # Frames clave asociados (si existen)
-    delete_fens(analysis_id)         # FENs asociados (si existen)
+    delete_key_frames(analysis_id)        # Frames clave asociados (si existen)
+    delete_fens(analysis_id)              # FENs asociados (si existen)
+    delete_engine_analysis(analysis_id)   # Análisis de motores cacheado (si existe)
 
     return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200

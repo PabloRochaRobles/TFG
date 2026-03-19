@@ -10,12 +10,13 @@ from django.conf import settings
 from rest_framework.response import Response
 from rest_framework import status
 
-TEMP_VIDEOS_LOCATION  = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
-TEMP_FRAMES_LOCATION  = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
-ENGINES_DIR           = os.path.join(settings.BASE_DIR, 'misc', 'engines')
-DEBUG_LOCATION        = os.path.join(settings.MEDIA_ROOT, 'debug')   # Imágenes de diagnóstico
-FENS_LOCATION         = os.path.join(settings.MEDIA_ROOT, 'fens')
-CORNERS_CONFIG_PATH   = os.path.join(settings.MEDIA_ROOT, 'corners_config.json')  # Calibración manual
+TEMP_VIDEOS_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
+TEMP_FRAMES_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
+ENGINES_DIR              = os.path.join(settings.BASE_DIR, 'misc', 'engines')
+DEBUG_LOCATION           = os.path.join(settings.MEDIA_ROOT, 'debug')
+FENS_LOCATION            = os.path.join(settings.MEDIA_ROOT, 'fens')
+ENGINE_ANALYSIS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'engine_analysis')
+CORNERS_CONFIG_PATH      = os.path.join(settings.MEDIA_ROOT, 'corners_config.json')
 
 NORMALIZED_SIZE = 1000
 PUNTOS_ORIGEN = []
@@ -213,14 +214,14 @@ def show_key_frames(key_frames):
 
 # Función para el borrado del archivo que contiene los frames clave
 def delete_key_frames(file_name):
-    path_frames = os.path.join(os.path.join(TEMP_FRAMES_LOCATION, file_name), '.npz')                           # Se crea una variable que almacena toda la ruta hasta el fichero que contiene los frames claves
+    path_frames = os.path.join(TEMP_FRAMES_LOCATION, f"{file_name}.npz")
     try:
-        if os.path.exists(path_frames):                                                                         # Si existe el archivo:
-            os.remove(os.path.join(TEMP_FRAMES_LOCATION, file_name))                                                # Ejecuta la orden de borrado del archivo con los frames claves
-            print(f"Frames clave {file_name} eliminado.")                                                           # Se informa que se ha conseguido borrar el archivo
+        if os.path.exists(path_frames):
+            os.remove(path_frames)
+            print(f"Frames clave {file_name}.npz eliminados.")
             return True
-        else:                                                                                                   # Si no localiza el archivo:
-            print("No se ha analizado la partida")                                                                  # Significa que no se ha procedido al análisis de la partida
+        else:
+            print(f"No se encontraron frames clave para {file_name}")
             return False
 
     except Exception as e:                                                                                      # Si da fallo en el borrado salta la excepción
@@ -1029,6 +1030,51 @@ def delete_fens(analysis_id):
         except Exception as e:
             print(f"[DELETE] Error al eliminar FENs {analysis_id}.json: {e}")
             return False
+    return False
+
+
+# -----------------------------------------
+# Cache del análisis de motores (engine analysis)
+# -----------------------------------------
+
+def save_engine_analysis(analysis_id, results):
+    """Guarda los resultados del análisis de motores en ENGINE_ANALYSIS_LOCATION/<analysis_id>.json."""
+    os.makedirs(ENGINE_ANALYSIS_LOCATION, exist_ok=True)
+    path = os.path.join(ENGINE_ANALYSIS_LOCATION, f"{analysis_id}.json")
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'results': results}, f)
+        print(f"[ENGINE] Análisis guardado: {path}")
+        return True
+    except Exception as e:
+        print(f"[ENGINE] Error al guardar análisis: {e}")
+        return False
+
+
+def load_engine_analysis(analysis_id):
+    """Carga el análisis de motores guardado. Devuelve la lista de resultados o None."""
+    path = os.path.join(ENGINE_ANALYSIS_LOCATION, f"{analysis_id}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('results')
+    except Exception as e:
+        print(f"[ENGINE] Error al cargar análisis: {e}")
+        return None
+
+
+def delete_engine_analysis(analysis_id):
+    """Elimina el análisis de motores asociado. Devuelve True si se borró."""
+    path = os.path.join(ENGINE_ANALYSIS_LOCATION, f"{analysis_id}.json")
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+            print(f"[DELETE] Engine analysis {analysis_id}.json eliminado.")
+            return True
+        except Exception as e:
+            print(f"[DELETE] Error al eliminar engine analysis: {e}")
     return False
 
 
