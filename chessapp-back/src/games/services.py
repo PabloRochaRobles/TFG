@@ -74,53 +74,6 @@ def process_image(frame):
     blur = cv2.GaussianBlur(gray, ksize=(21, 21), sigmaX=0)     # Se le aplica un filtro Gaussiano a la imagen en escala de grises
     return blur                                                 # Devuelve el frame con estos filtros aplicados
 
-# Función que registra las coordenadas al hacer clic
-def click_event(event, x, y, _flags, param):
-
-    global PUNTOS_ORIGEN
-
-    if event == cv2.EVENT_LBUTTONDOWN:                                                  # Si el botón izquierdo del ratón fue pulsado:
-        if len(PUNTOS_ORIGEN) < MAX_PUNTOS:                                             # Si no se han pulsado el número máximo de puntos posibles
-            PUNTOS_ORIGEN.append((x, y))                                                    # Añade las coordenadas seleccionadas
-            print(f"Punto {len(PUNTOS_ORIGEN)}: ({x}, {y})")                                # Se muestra cuáles son esas coordenadas
-            img_copy = param[0]                                                             # Se copia la imagen
-            cv2.circle(img_copy, (x, y), 5, (0, 0, 255), -1)                                # Se muestra la imagen con un círculo rojo donde se ha pulsado
-            cv2.putText(img_copy, str(len(PUNTOS_ORIGEN)), (x + 10, y - 10),                # Se muestra un número junto al círculo indicando que número de pulsación es
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            cv2.imshow(VENTANA_NOMBRE, img_copy)                                            # Se muestran los cambios realizados
-
-        if len(PUNTOS_ORIGEN) == MAX_PUNTOS:                                            # Si se ha pulsado el número máximo de puntos posibles:
-            cv2.destroyWindow(VENTANA_NOMBRE)                                           # Se cierran todas las ventanas
-            print("Puntos de origen capturados.")                                       # Se informa que todos los puntos han sido captados
-
-# Función para enmarcar el tablero de ajedrez haciendo que el usuario pulse las esquinas de este
-def get_corners(video_path):
-
-    global PUNTOS_ORIGEN
-    PUNTOS_ORIGEN = []
-
-    video = open_video(video_path)                                                      # Llamada a la función de apertura del video
-    ret, frame = video.read()                                                           # Obtención del primer frame y de la variable de confirmación
-    video.release()                                                                     # Cierre del video
-
-    if not ret:                                                                         # Si da falso
-        print(f"DEBUG: Error. Video vacio")                                             # El frame está vacío
-
-    display_frame = frame.copy()                                                        # Clonación del frame para poder sobreescribirlo
-    cv2.namedWindow(VENTANA_NOMBRE)                                                     # Creación de una ventana
-    cv2.setMouseCallback(VENTANA_NOMBRE, click_event, param=[display_frame])            # Llamada a la función callback "click_event" pasandole el frames clonado
-
-    print("\n>>> Orden de Clic: Esquina Superior Izquierda, Superior Derecha, Inferior Derecha, Inferior Izquierda <<<")
-
-    cv2.imshow(VENTANA_NOMBRE, display_frame)                                           # Mostrar el frame
-    cv2.waitKey(0)                                                                      # Esperar a que se realicen las pulsaciones
-
-    if len(PUNTOS_ORIGEN) == MAX_PUNTOS:                                                # Si se han realizado MAX_PUNTOS pulsaciones:
-        return np.float32(PUNTOS_ORIGEN)                                                    # Se devuelven los puntos marcados
-    else:                                                                               # Si se ha realizado un número distinto de pulsaciones:
-        print("ERROR: La selección fue cancelada o incompleta.")                            # Informar del error
-        return None                                                                         # No se devuelve nada
-
 # Función que transforma el cómo se ve el tablero tras aplicarle el cambio de perspectiva arreglando que la imagen no se distorsione
 def get_matriz(coords):
     # coords llega en orden [a1, a8, h8, h1] tal como los toca el usuario en la calibración.
@@ -171,46 +124,6 @@ def save_key_frames(key_frames, file_name):
     except Exception as e:
         print(f"DEBUG: Error al guardar los frames clave {e}")      # Si da fallo en el almacenamiento, salta esta excepción
         return False
-
-# Función para el cargado de todos los frames detectados como clave en un array
-def load_key_frames(file_name):
-
-    path = os.path.join(TEMP_FRAMES_LOCATION, file_name)         # Variable que almacena el path completo incluyendo el nombre del archivo del cual se quiere extraer los frames
-
-    if not os.path.exists(path):
-        print("ERROR: No se pudo abrir el archivo.")            # Si no existe el path, se notifica el error. Se devuelve un array vacio
-        return []
-    try:
-        loaded_data = np.load(path)                             # Carga los datos del .npz en la variable
-
-        key_frames_array = loaded_data["frames"]                # Extrae los datos de la variable y los almacena en un array
-
-        key_frames = [frame for frame in key_frames_array]      # Recorre el array extrae todos los frames almacenados
-
-        return key_frames                                       # Devuelve la lista de frames clave
-
-    except Exception as e:
-        print(f"Error al cargar los frames clave {e}")          # Si da fallo al sacar los frame claves salta la excepción
-        return []                                               # Devuelve la lista vacia
-
-# Funcion para la muestra de todos los frames detectados como clave
-def show_key_frames(key_frames):
-    if isinstance(key_frames, dict) and key_frames.get("error"):    # Comprobación del tipo y del contenido
-        print(f"ERROR: {key_frames['error']}")                      # Si falla se notifica del error
-        return False
-
-    print(f"Se extrajeron {len(key_frames)} frames clave.")         # Si es correcto, se hace recuento del número de frames clave que hay
-
-    for i, frame in enumerate(key_frames):                          # Bucle del que se van a extraer cada uno de los frames
-
-        cv2.imshow(f"Jugada {i + 1}", frame)                        # Muestra el frame clave
-
-        key = cv2.waitKey(0) & 0xFF                                 # Espera a que se pulse una tecla para continuar con la función
-
-        if key == ord('q') or key == 27:                            # Si se pulsa 'q' o ESC se sale de la visualización del programa
-            break
-
-    cv2.destroyAllWindows()                                         # Cierra todas las ventanas creadas al finalizar
 
 # Función para el borrado del archivo que contiene los frames clave
 def delete_key_frames(file_name):
@@ -1110,7 +1023,7 @@ def analysis_best_posStockfish(fen):
             "movement_uci": best_move.uci(),
             "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
             "new_fen": board.fen(),
-            "score": info["score"].relative.score(mate_score=10000) / 100
+            "score": info["score"].white().score(mate_score=10000) / 100
         }
 
 def analysis_best_posObsidian(fen):
@@ -1141,7 +1054,7 @@ def analysis_best_posObsidian(fen):
             "movement_uci": best_move.uci(),
             "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
             "new_fen": board.fen(),
-            "score": info["score"].relative.score(mate_score=10000) / 100
+            "score": info["score"].white().score(mate_score=10000) / 100
         }
 
 def analysis_best_posPlentyChess(fen):
@@ -1173,7 +1086,7 @@ def analysis_best_posPlentyChess(fen):
             "movement_uci": best_move.uci(),
             "movement_san": board.san(best_move) if not board.move_stack else chess.Board(fen).san(best_move),
             "new_fen": board.fen(),
-            "score": info["score"].relative.score(mate_score=10000) / 100
+            "score": info["score"].white().score(mate_score=10000) / 100
         }
 
 def consensus_analysis(stock, obsidian, plenty, fen):

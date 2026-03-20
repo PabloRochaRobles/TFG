@@ -1,4 +1,4 @@
-import { analysisChain, analyzeVideo, getAnalysisProgress, getEngineAnalysis, saveEngineAnalysis, PositionAnalysis } from '@/constants/api';
+import { analysisChain, analyzeVideo, getAnalysisProgress, getEngineAnalysis, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -272,9 +272,6 @@ export default function AnalysisScreen() {
                     </View>
                   ))}
                 </View>
-                <Text style={[styles.boardCaption, { color: colors.textSecondary }]}>
-                  {t.analysis.interactiveBoard}
-                </Text>
               </View>
 
               {/* Navegación de movimientos */}

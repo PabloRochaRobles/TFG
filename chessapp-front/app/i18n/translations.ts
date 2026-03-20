@@ -91,7 +91,6 @@ export const translations = {
       analysisId: 'ID de análisis:',
       copied: 'Copiado',
       copiedMessage: 'ID de análisis copiado al portapapeles',
-      interactiveBoard: 'Tablero interactivo',
       moveAnalysis: 'Mejores jugadas',
       comingSoon: 'Próximamente',
       comingSoonText:
@@ -291,7 +290,6 @@ export const translations = {
       analysisId: 'Analysis ID:',
       copied: 'Copied',
       copiedMessage: 'Analysis ID copied to clipboard',
-      interactiveBoard: 'Interactive Board',
       moveAnalysis: 'Best Moves',
       comingSoon: 'Coming Soon',
       comingSoonText:
