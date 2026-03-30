@@ -3,7 +3,7 @@ from .views import (
     VideoUploadView, delete_video_and_frames, AnalyzeVideoView, VideoStreamView,
     VideoListView, AnalysisChainView, FensView,
     VideoFirstFrameView, CalibrateCornersView, AnalysisProgressView,
-    EngineAnalysisView,
+    EngineAnalysisView, WarpedFramePreviewView,
 )
 
 urlpatterns = [
@@ -19,4 +19,5 @@ urlpatterns = [
     path('calibrate/', CalibrateCornersView.as_view(), name='calibrate_corners'),
     path('engine-analysis/', EngineAnalysisView.as_view(), name='engine_analysis_save'),
     path('engine-analysis/<str:analysis_id>/', EngineAnalysisView.as_view(), name='engine_analysis_get'),
+    path('warped-preview/<str:file_name>/', WarpedFramePreviewView.as_view(), name='warped_preview'),
 ]

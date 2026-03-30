@@ -147,6 +147,28 @@ export async function saveEngineAnalysis(analysisId: string, results: PositionAn
   });
 }
 
+export async function fetchWarpedPreview(
+  fileName: string,
+  corners: [number, number][]
+): Promise<string> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/partidas/warped-preview/${encodeURIComponent(fileName)}/`,
+    {
+      method: 'POST',
+      headers: { ...HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corners }),
+    }
+  );
+  if (!response.ok) throw new Error('No se pudo obtener la previsualización');
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function calibrateCorners(
   corners: [number, number][]
 ): Promise<{ message: string }> {

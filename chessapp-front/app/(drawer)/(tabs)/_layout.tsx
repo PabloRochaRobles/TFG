@@ -31,6 +31,8 @@ export default function TabLayout() {
         },
       }}
     >
+
+      {/* Botón para ir a Inicio */}
       <Tabs.Screen
         name="index"
         options={{
@@ -41,6 +43,7 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Botón para ir a Subir vídeo */}
       <Tabs.Screen
         name="upload"
         options={{
@@ -51,6 +54,7 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Botón para ir a Camara */}
       <Tabs.Screen
         name="camera"
         options={{
@@ -61,6 +65,7 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Botón para ir a Librería */}
       <Tabs.Screen
         name="library"
         options={{

@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { analysisChain, analyzeVideo, getAnalysisProgress, getEngineAnalysis, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
@@ -9,6 +10,15 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Clipboard, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
+
+const LAST_GAME_KEY = 'lastGame';
+
+export type LastGameData = {
+  file: string;
+  analysisId: string;
+  moves: number;
+  date: string;
+};
 
 // Mapeo de letras FEN a símbolos Unicode de ajedrez
 const PIECE_SYMBOLS: Record<string, string> = {
@@ -135,6 +145,15 @@ export default function AnalysisScreen() {
         setEngineAnalysis(engineResults);
         saveEngineAnalysis(analysisId, engineResults); // fire-and-forget
       }
+
+      // Guardar info de la última partida analizada para el home
+      const lastGameData: LastGameData = {
+        file: file as string,
+        analysisId: result.analisis_id,
+        moves: result.total_frames,
+        date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+      };
+      AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
 
       setPhase('done');
     } catch (err: any) {
@@ -316,6 +335,27 @@ export default function AnalysisScreen() {
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
                   {t.analysis.moveAnalysis}
                 </Text>
+
+                {/* Leyenda de colores de motores */}
+                <View style={[styles.legend, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.legendTitle, { color: colors.textSecondary }]}>
+                    {t.analysis.analysisEngines}
+                  </Text>
+                  <View style={styles.legendItems}>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: ENGINE_COLORS.stockfish }]} />
+                      <Text style={[styles.legendText, { color: colors.text }]}>Stockfish</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: ENGINE_COLORS.obsidian }]} />
+                      <Text style={[styles.legendText, { color: colors.text }]}>Obsidian</Text>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: ENGINE_COLORS.plentychess }]} />
+                      <Text style={[styles.legendText, { color: colors.text }]}>PlentyChess</Text>
+                    </View>
+                  </View>
+                </View>
                 {engineAnalysis.length === 0 ? (
                   <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <FontAwesome5 name="chess-knight" size={32} color={colors.textSecondary} />

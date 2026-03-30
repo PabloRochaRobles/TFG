@@ -21,13 +21,15 @@ export default function TipsScreen() {
       <StatusBar style={isDarkMode ? "light" : "dark"} />
       <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
         <View style={[styles.header, { backgroundColor: colors.headerBg }]}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
+          
+          {/* Botón de vuelta a atrás */}
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={28} color={colors.headerText} />
           </TouchableOpacity>
+
           <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.tips.title}</Text>
+          
+          {/* Botón desplegable lateral */}
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
@@ -37,7 +39,7 @@ export default function TipsScreen() {
         </View>
 
         <ScrollView contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}>
-          {/* Pasos / Instrucciones */}
+          {/* Enumeración de consejos */}
           <View style={styles.stepsContainer}>
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip1Label}</Text>
@@ -57,6 +59,11 @@ export default function TipsScreen() {
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip4Label}</Text>
               <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip4}</Text>
+            </View>
+
+            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip5Label}</Text>
+              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip5}</Text>
             </View>
           </View>
         </ScrollView>

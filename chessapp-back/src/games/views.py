@@ -21,6 +21,7 @@ from .services import (
     save_corners_config, set_progress, get_progress,
     save_engine_analysis, load_engine_analysis, delete_engine_analysis,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
+    get_warped_frame_preview,
 )
 
 fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
@@ -259,6 +260,33 @@ class VideoFirstFrameView(APIView):
             return Response({'error': 'No se pudo leer el frame.'}, status=status.HTTP_400_BAD_REQUEST)
 
         ret, buf = _cv2.imencode('.jpg', frame, [_cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ret:
+            return Response({'error': 'Error al codificar el frame.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return _HR(buf.tobytes(), content_type='image/jpeg')
+
+
+class WarpedFramePreviewView(APIView):
+    """POST: Devuelve el primer frame warpeado con las 4 esquinas dadas como JPEG."""
+
+    @staticmethod
+    def post(request, file_name):
+        import cv2 as _cv2
+        from django.http import HttpResponse as _HR
+
+        video_path = fs_video.path(file_name)
+        if not os.path.exists(video_path):
+            return Response({'error': 'Video no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        corners_raw = request.data.get('corners')
+        if not corners_raw or len(corners_raw) != 4:
+            return Response({'error': 'Se requieren exactamente 4 esquinas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        warped = get_warped_frame_preview(video_path, corners_raw)
+        if warped is None:
+            return Response({'error': 'No se pudo obtener el frame.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ret, buf = _cv2.imencode('.jpg', warped, [_cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ret:
             return Response({'error': 'Error al codificar el frame.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

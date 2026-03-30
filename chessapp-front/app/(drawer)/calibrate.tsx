@@ -37,6 +37,7 @@ export default function CalibrateScreen() {
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(fileParam ?? null);
   const [corners, setCorners] = useState<Corner[]>([]);
+  const [rotation, setRotation] = useState(0);
 
   const imageRef = useRef<View>(null);
   const [imageLayout, setImageLayout] = useState({ x: 0, y: 0, width: 1, height: 1 });
@@ -71,9 +72,30 @@ export default function CalibrateScreen() {
   const handleImageTouch = (e: any) => {
     if (corners.length >= 4) return;
     const { locationX, locationY } = e.nativeEvent;
-    const rx = Math.max(0, Math.min(1, locationX / imageLayout.width));
-    const ry = Math.max(0, Math.min(1, locationY / imageLayout.height));
+    const W = imageLayout.width;
+    const H = imageLayout.height;
+
+    let rx: number, ry: number;
+    if (rotation === 0) {
+      rx = Math.max(0, Math.min(1, locationX / W));
+      ry = Math.max(0, Math.min(1, locationY / H));
+    } else {
+      // El imageContainer está rotado θ° (sentido horario).
+      // locationX/locationY están en el espacio sin rotar del TouchableOpacity.
+      // Aplicamos la rotación inversa para obtener las coordenadas originales de la imagen.
+      const θ = (rotation * Math.PI) / 180;
+      const dx = locationX - W / 2;
+      const dy = locationY - H / 2;
+      const origX = W / 2 + dx * Math.cos(θ) + dy * Math.sin(θ);
+      const origY = H / 2 - dx * Math.sin(θ) + dy * Math.cos(θ);
+      rx = Math.max(0, Math.min(1, origX / W));
+      ry = Math.max(0, Math.min(1, origY / H));
+    }
     setCorners(prev => [...prev, [rx, ry]]);
+  };
+
+  const rotateBy = (delta: number) => {
+    setRotation(prev => ((prev + delta) % 360 + 360) % 360);
   };
 
   const handleConfirm = () => {
@@ -187,13 +209,67 @@ export default function CalibrateScreen() {
               </Text>
             )}
 
+            {/* Rotation control */}
+            <View style={styles.rotationRow}>
+              <Text style={[styles.rotationLabel, { color: colors.textSecondary }]}>
+                {t.calibrate.rotationLabel}
+              </Text>
+              <View style={styles.rotationControls}>
+                <TouchableOpacity
+                  style={[styles.rotBtn, { borderColor: colors.border }]}
+                  onPress={() => rotateBy(-5)}
+                >
+                  <Ionicons name="remove" size={12} color={colors.text} />
+                  <Text style={[styles.rotBtnText, { color: colors.text }]}>5°</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.rotBtn, { borderColor: colors.border }]}
+                  onPress={() => rotateBy(-1)}
+                >
+                  <Ionicons name="remove" size={12} color={colors.text} />
+                  <Text style={[styles.rotBtnText, { color: colors.text }]}>1°</Text>
+                </TouchableOpacity>
+                <View style={[styles.rotDisplay, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                  <Text style={[styles.rotDisplayText, { color: colors.text }]}>
+                    {rotation}°
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.rotBtn, { borderColor: colors.border }]}
+                  onPress={() => rotateBy(1)}
+                >
+                  <Ionicons name="add" size={12} color={colors.text} />
+                  <Text style={[styles.rotBtnText, { color: colors.text }]}>1°</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.rotBtn, { borderColor: colors.border }]}
+                  onPress={() => rotateBy(5)}
+                >
+                  <Ionicons name="add" size={12} color={colors.text} />
+                  <Text style={[styles.rotBtnText, { color: colors.text }]}>5°</Text>
+                </TouchableOpacity>
+                {rotation !== 0 && (
+                  <TouchableOpacity
+                    style={[styles.rotBtn, { borderColor: colors.primary }]}
+                    onPress={() => setRotation(0)}
+                  >
+                    <Ionicons name="refresh" size={14} color={colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             {/* Touchable image */}
             <TouchableOpacity
               activeOpacity={1}
               onPress={handleImageTouch}
               style={styles.imageWrapper}
             >
-              <View ref={imageRef} onLayout={handleImageLayout} style={styles.imageContainer}>
+              <View
+                ref={imageRef}
+                onLayout={handleImageLayout}
+                style={[styles.imageContainer, rotation !== 0 && { transform: [{ rotate: `${rotation}deg` }] }]}
+              >
                 <Image
                   source={{
                     uri: frameUri,
@@ -283,7 +359,16 @@ const styles = StyleSheet.create({
                   alignItems: 'center', justifyContent: 'center' },
   stepLabel:    { fontSize: 12, fontWeight: '600' },
   nextHint:     { fontSize: 14, fontWeight: '600', textAlign: 'center' },
-  imageWrapper: {},
+  rotationRow:      { gap: 6 },
+  rotationLabel:    { fontSize: 13, fontWeight: '500' },
+  rotationControls: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  rotBtn:           { flexDirection: 'row', alignItems: 'center', gap: 2, borderWidth: 1,
+                      borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  rotBtnText:       { fontSize: 12, fontWeight: '500' },
+  rotDisplay:       { borderWidth: 1, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6,
+                      minWidth: 52, alignItems: 'center' },
+  rotDisplayText:   { fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  imageWrapper: { overflow: 'visible' },
   imageContainer: { position: 'relative' },
   marker:       { position: 'absolute', width: 28, height: 28, borderRadius: 14, borderWidth: 2,
                   alignItems: 'center', justifyContent: 'center' },

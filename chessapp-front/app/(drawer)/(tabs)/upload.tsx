@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   Image,
@@ -19,7 +20,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getFirstFrameUrl, uploadVideo } from '@/constants/api';
+import { fetchWarpedPreview, getFirstFrameUrl, uploadVideo } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -33,7 +34,97 @@ const CORNER_ORDER = [
 ];
 type Corner = [number, number]; // coordenadas relativas [0-1]
 
-type Phase = 'idle' | 'uploading' | 'uploaded' | 'calibrating' | 'error';
+type Phase = 'idle' | 'uploading' | 'uploaded' | 'calibrating' | 'adjusting' | 'error';
+
+// ── Perspectiva: matemática para corregir esquinas tras ajuste de encuadre ──
+
+type Mat3 = [[number, number, number], [number, number, number], [number, number, number]];
+
+function gaussElim(A: number[][], b: number[]): number[] {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+    }
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    for (let row = 0; row < n; row++) {
+      if (row !== col && Math.abs(M[col][col]) > 1e-12) {
+        const f = M[row][col] / M[col][col];
+        for (let j = col; j <= n; j++) M[row][j] -= f * M[col][j];
+      }
+    }
+  }
+  return M.map((row, i) => (Math.abs(row[i]) > 1e-12 ? row[n] / row[i] : 0));
+}
+
+function getPerspTransform(src: Corner[], dst: Corner[]): Mat3 {
+  const A: number[][] = [];
+  const b: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i];
+    const [xp, yp] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -xp * x, -xp * y]);
+    b.push(xp);
+    A.push([0, 0, 0, x, y, 1, -yp * x, -yp * y]);
+    b.push(yp);
+  }
+  const h = gaussElim(A, b);
+  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+}
+
+function invertMat3(m: Mat3): Mat3 {
+  const [[a, b, c], [d, e, f], [g, h, k]] = m;
+  const det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+  return [
+    [(e * k - f * h) / det, (c * h - b * k) / det, (b * f - c * e) / det],
+    [(f * g - d * k) / det, (a * k - c * g) / det, (c * d - a * f) / det],
+    [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det],
+  ];
+}
+
+function applyH(M: Mat3, pt: Corner): Corner {
+  const [x, y] = pt;
+  const w = M[2][0] * x + M[2][1] * y + M[2][2];
+  return [(M[0][0] * x + M[0][1] * y + M[0][2]) / w, (M[1][0] * x + M[1][1] * y + M[1][2]) / w];
+}
+
+/**
+ * Calcula las esquinas corregidas en el espacio de la imagen original a partir
+ * del ajuste de encuadre que el usuario realizó (pan + zoom sobre la imagen warpeada).
+ *
+ * La imagen warpeada se muestra centrada en un contenedor cuadrado de lado G.
+ * Tras el ajuste (panX, panY, userScale), los bordes del contenedor corresponden
+ * a nuevas posiciones en la imagen warpeada [0-1]. Se les aplica la homografía
+ * inversa para obtener las esquinas corregidas en el espacio original [0-1].
+ */
+function computeCorrectedCorners(
+  originalCorners: Corner[],
+  containerSize: number,
+  panX: number,
+  panY: number,
+  userScale: number,
+): Corner[] {
+  // El backend mapea las esquinas de origen a los 4 vértices del cuadrado unitario
+  // en el orden: TL→(0,0), TR→(1,0), BR→(1,1), BL→(0,1)
+  const dst: Corner[] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const M = getPerspTransform(originalCorners, dst);
+  const Minv = invertMat3(M);
+
+  const G = containerSize;
+  // Las esquinas del contenedor en coordenadas de pantalla se mapean al espacio
+  // warpeado [0-1] invirtiendo la transformada de visualización:
+  //   warped_x = (screen_x - G/2 - panX) / (G * userScale) + 0.5
+  const screenCorners: Corner[] = [[0, 0], [G, 0], [G, G], [0, G]];
+  return screenCorners.map(([sx, sy]): Corner => {
+    const wx = (sx - G / 2 - panX) / (G * userScale) + 0.5;
+    const wy = (sy - G / 2 - panY) / (G * userScale) + 0.5;
+    return applyH(Minv, [wx, wy]);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function UploadScreen() {
   const [videoUri, setVideoUri] = useState<string | null>(null);
@@ -49,19 +140,32 @@ export default function UploadScreen() {
   const cw = screenWidth;
   const ch = screenWidth * 0.65;
 
-  // Zoom / pan — shared values for gesture worklets
+  // Zoom / pan calibración — shared values para gesture worklets
   const scale    = useSharedValue(1);
   const tx       = useSharedValue(0);
   const ty       = useSharedValue(0);
   const savedScale = useSharedValue(1);
   const savedTx    = useSharedValue(0);
   const savedTy    = useSharedValue(0);
-  // imgDisplay mirrored as shared values so they're accessible inside worklets
+  // imgDisplay reflejado como shared values para acceso en worklets
   const imgOffX = useSharedValue(0);
   const imgOffY = useSharedValue(0);
   const imgDW   = useSharedValue(1);
   const imgDH   = useSharedValue(1);
   const [zoomLevel, setZoomLevel] = useState(1);
+
+  // Estado de ajuste de encuadre
+  const adjSize = cw;                              // contenedor cuadrado
+  const [warpedPreviewUri, setWarpedPreviewUri] = useState<string | null>(null);
+  const [warpedLoading, setWarpedLoading] = useState(false);
+
+  // Pan / zoom de ajuste (shared values independientes)
+  const adjScale     = useSharedValue(1);
+  const adjTx        = useSharedValue(0);
+  const adjTy        = useSharedValue(0);
+  const adjSavedScale = useSharedValue(1);
+  const adjSavedTx    = useSharedValue(0);
+  const adjSavedTy    = useSharedValue(0);
 
   // Resetea la pantalla la próxima vez que se enfoque tras haber lanzado un análisis
   const analysisStarted = useRef(false);
@@ -73,9 +177,12 @@ export default function UploadScreen() {
       setSavedFileName(null);
       setPhase('idle');
       setCorners([]);
+      setWarpedPreviewUri(null);
       scale.value = 1; tx.value = 0; ty.value = 0;
       savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
       setZoomLevel(1);
+      adjScale.value = 1; adjTx.value = 0; adjTy.value = 0;
+      adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
     }
   }, []));
 
@@ -150,14 +257,16 @@ export default function UploadScreen() {
     setSavedFileName(null);
     setPhase('idle');
     setCorners([]);
+    setWarpedPreviewUri(null);
     scale.value = 1; tx.value = 0; ty.value = 0;
     savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
     setZoomLevel(1);
+    adjScale.value = 1; adjTx.value = 0; adjTy.value = 0;
+    adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
   };
 
   // ── Calibración ────────────────────────────────────────────────────────────
 
-  // Calcula el área real de la imagen corrigiendo el letterbox de resizeMode="contain"
   const handleImageLoad = (e: any) => {
     const { width: natW, height: natH } = e.nativeEvent.source;
     const imgRatio = natW / natH;
@@ -168,7 +277,6 @@ export default function UploadScreen() {
     const oX = (cw - dW) / 2;
     const oY = (ch - dH) / 2;
     setImgDisplay({ offsetX: oX, offsetY: oY, displayW: dW, displayH: dH });
-    // Also update shared values for worklet access
     imgOffX.value = oX; imgOffY.value = oY;
     imgDW.value = dW;   imgDH.value = dH;
   };
@@ -185,7 +293,7 @@ export default function UploadScreen() {
     setZoomLevel(1);
   };
 
-  // ── Gestures ──
+  // ── Gestos calibración ──
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
       scale.value = Math.max(1, Math.min(6, savedScale.value * e.scale));
@@ -214,7 +322,6 @@ export default function UploadScreen() {
 
   const tapGesture = Gesture.Tap().onEnd((e) => {
     'worklet';
-    // Reverse the zoom/pan transform to get original image-space coordinates
     const vx = (e.x - cw / 2 - tx.value) / scale.value + cw / 2;
     const vy = (e.y - ch / 2 - ty.value) / scale.value + ch / 2;
     const ix = vx - imgOffX.value;
@@ -236,14 +343,79 @@ export default function UploadScreen() {
     ],
   }));
 
-  const handleConfirmAnalysis = () => {
+  // ── Gestos ajuste de encuadre ──
+  const adjPinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      adjScale.value = Math.max(0.3, Math.min(5, adjSavedScale.value * e.scale));
+    })
+    .onEnd(() => {
+      adjSavedScale.value = adjScale.value;
+    });
+
+  const adjPan = Gesture.Pan()
+    .minDistance(5)
+    .onUpdate((e) => {
+      adjTx.value = adjSavedTx.value + e.translationX;
+      adjTy.value = adjSavedTy.value + e.translationY;
+    })
+    .onEnd(() => {
+      adjSavedTx.value = adjTx.value;
+      adjSavedTy.value = adjTy.value;
+    });
+
+  const adjComposed = Gesture.Simultaneous(adjPinch, adjPan);
+
+  const adjAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: adjTx.value },
+      { translateY: adjTy.value },
+      { scale: adjScale.value },
+    ],
+  }));
+
+  // ── Transición calibrating → adjusting ──
+  const handleEnterAdjusting = async () => {
     if (corners.length !== 4 || !savedFileName) return;
+    setWarpedPreviewUri(null);
+    setWarpedLoading(true);
+    // Resetear ajuste previo
+    adjScale.value = 1; adjTx.value = 0; adjTy.value = 0;
+    adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
+    setPhase('adjusting');
+    try {
+      const uri = await fetchWarpedPreview(savedFileName, corners as Corner[]);
+      setWarpedPreviewUri(uri);
+    } catch {
+      Alert.alert('Error', 'No se pudo cargar la previsualización del tablero');
+      setPhase('calibrating');
+    } finally {
+      setWarpedLoading(false);
+    }
+  };
+
+  const resetAdjust = () => {
+    adjScale.value = withSpring(1);
+    adjTx.value    = withSpring(0);
+    adjTy.value    = withSpring(0);
+    adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
+  };
+
+  // ── Confirmar ajuste y navegar al análisis ──
+  const handleConfirmAdjustment = () => {
+    if (!savedFileName) return;
+    const corrected = computeCorrectedCorners(
+      corners as Corner[],
+      adjSize,
+      adjTx.value,
+      adjTy.value,
+      adjScale.value,
+    );
     analysisStarted.current = true;
     router.push({
       pathname: '/(drawer)/analysis',
       params: {
         file: savedFileName,
-        corners: JSON.stringify(corners),
+        corners: JSON.stringify(corrected),
       },
     });
   };
@@ -265,12 +437,16 @@ export default function UploadScreen() {
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.headerText }]}>
-            {phase === 'calibrating' ? t.upload.calibrateTitle : t.upload.title}
+            {phase === 'calibrating'
+              ? t.upload.calibrateTitle
+              : phase === 'adjusting'
+                ? t.upload.adjustTitle
+                : t.upload.title}
           </Text>
         </View>
 
         <ScrollView
-          scrollEnabled={phase !== 'calibrating'}
+          scrollEnabled={phase !== 'calibrating' && phase !== 'adjusting'}
           contentContainerStyle={[styles.content, { backgroundColor: colors.background }]}
         >
 
@@ -278,7 +454,6 @@ export default function UploadScreen() {
           {phase === 'calibrating' && frameUri && (
             <View style={styles.calibrateSection}>
 
-              {/* Instrucciones */}
               <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                   {t.upload.calibrateInstructions}
@@ -307,7 +482,6 @@ export default function UploadScreen() {
                 ))}
               </View>
 
-              {/* Texto de ayuda */}
               {nextCorner ? (
                 <Text style={[styles.nextHint, { color: nextCorner.color }]}>
                   {t.upload.tapCorner} {nextCorner.label}
@@ -318,7 +492,7 @@ export default function UploadScreen() {
                 </Text>
               )}
 
-              {/* Imagen con zoom — GestureDetector envuelve el Animated.View */}
+              {/* Imagen con zoom */}
               <View style={styles.imageWrapper}>
                 <GestureDetector gesture={composedGesture}>
                   <Animated.View style={[styles.imageContainer, animatedStyle]}>
@@ -331,19 +505,15 @@ export default function UploadScreen() {
                       resizeMode="contain"
                       onLoad={handleImageLoad}
                     />
-                    {/* Marcadores tipo cruceta — el centro coincide con el toque exacto */}
                     {corners.map(([rx, ry], idx) => {
                       const c = CORNER_ORDER[idx];
                       const cx = imgDisplay.offsetX + rx * imgDisplay.displayW;
                       const cy = imgDisplay.offsetY + ry * imgDisplay.displayH;
                       return (
                         <View key={idx} style={[styles.crosshair, { left: cx - 16, top: cy - 16 }]}>
-                          {/* Líneas de cruceta */}
                           <View style={[styles.chHLine, { backgroundColor: c.color }]} />
                           <View style={[styles.chVLine, { backgroundColor: c.color }]} />
-                          {/* Punto central */}
                           <View style={[styles.chDot, { backgroundColor: c.color }]} />
-                          {/* Badge con número */}
                           <View style={[styles.chBadge, { backgroundColor: c.color }]}>
                             <Text style={styles.chBadgeText}>{idx + 1}</Text>
                           </View>
@@ -392,20 +562,134 @@ export default function UploadScreen() {
                 )}
               </View>
 
-              {/* Botón analizar */}
+              {/* Botón siguiente → fase de ajuste */}
               {corners.length === 4 && (
                 <TouchableOpacity
                   style={[styles.analyzeButton, { backgroundColor: colors.primary }]}
-                  onPress={handleConfirmAnalysis}
+                  onPress={handleEnterAdjusting}
                 >
-                  <Ionicons name="analytics" size={20} color="#fff" />
+                  <Ionicons name="arrow-forward-circle" size={20} color="#fff" />
                   <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>
                     {t.upload.confirmAndAnalyze}
                   </Text>
                 </TouchableOpacity>
               )}
 
-              {/* Descartar vídeo — siempre visible en calibración */}
+              <TouchableOpacity
+                style={[styles.discardButton, { borderColor: '#ef4444' }]}
+                onPress={handleReset}
+              >
+                <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                <Text style={[styles.discardButtonText, { color: '#ef4444' }]}>
+                  {t.upload.discard}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Fase de ajuste de encuadre ── */}
+          {phase === 'adjusting' && (
+            <View style={styles.calibrateSection}>
+
+              <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+                  {t.upload.adjustInstructions}
+                </Text>
+              </View>
+
+              {/* Contenedor cuadrado: imagen warpeada + cuadrícula fija */}
+              <View style={[styles.adjWrapper, { width: adjSize, height: adjSize }]}>
+                {warpedLoading || !warpedPreviewUri ? (
+                  <View style={styles.adjLoading}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                    <Text style={[styles.adjLoadingText, { color: colors.textSecondary }]}>
+                      {t.upload.loadingPreview}
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    {/* Imagen warpeada desplazable */}
+                    <GestureDetector gesture={adjComposed}>
+                      <View style={{ width: adjSize, height: adjSize }}>
+                        <Animated.View
+                          style={[
+                            { position: 'absolute', width: adjSize, height: adjSize },
+                            adjAnimatedStyle,
+                          ]}
+                        >
+                          <Image
+                            source={{ uri: warpedPreviewUri }}
+                            style={{ width: adjSize, height: adjSize }}
+                            resizeMode="cover"
+                          />
+                        </Animated.View>
+                      </View>
+                    </GestureDetector>
+
+                    {/* Cuadrícula fija 8×8 — no recibe toques */}
+                    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <View
+                          key={`h${i}`}
+                          style={[styles.gridLineH, {
+                            top: (i / 8) * adjSize,
+                            width: adjSize,
+                          }]}
+                        />
+                      ))}
+                      {Array.from({ length: 9 }).map((_, i) => (
+                        <View
+                          key={`v${i}`}
+                          style={[styles.gridLineV, {
+                            left: (i / 8) * adjSize,
+                            height: adjSize,
+                          }]}
+                        />
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+
+              <Text style={[styles.zoomHint, { color: colors.textSecondary }]}>
+                Pellizca para hacer zoom · Desliza para mover
+              </Text>
+
+              {/* Botones secundarios de ajuste */}
+              <View style={styles.calibrateActions}>
+                <TouchableOpacity
+                  style={[styles.btnSecondary, { borderColor: colors.border }]}
+                  onPress={resetAdjust}
+                >
+                  <Ionicons name="scan-outline" size={16} color={colors.text} />
+                  <Text style={[styles.btnSecondaryText, { color: colors.text }]}>
+                    {t.upload.adjustReset}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btnSecondary, { borderColor: colors.border }]}
+                  onPress={() => setPhase('calibrating')}
+                >
+                  <Ionicons name="arrow-back" size={16} color={colors.text} />
+                  <Text style={[styles.btnSecondaryText, { color: colors.text }]}>
+                    {t.upload.adjustBack}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Botón analizar */}
+              <TouchableOpacity
+                style={[styles.analyzeButton, { backgroundColor: colors.primary, opacity: warpedLoading ? 0.5 : 1 }]}
+                onPress={handleConfirmAdjustment}
+                disabled={warpedLoading}
+              >
+                <Ionicons name="analytics" size={20} color="#fff" />
+                <Text style={[styles.analyzeButtonText, { color: '#fff' }]}>
+                  {t.upload.adjustConfirm}
+                </Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.discardButton, { borderColor: '#ef4444' }]}
                 onPress={handleReset}
@@ -419,9 +703,8 @@ export default function UploadScreen() {
           )}
 
           {/* ── Resto de fases (idle / uploading / uploaded / error) ── */}
-          {phase !== 'calibrating' && (
+          {phase !== 'calibrating' && phase !== 'adjusting' && (
             <>
-              {/* Zona de selección / previsualización de vídeo */}
               {videoUri ? (
                 <View style={styles.playerContainer}>
                   <VideoView
@@ -447,7 +730,6 @@ export default function UploadScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Barra de progreso de subida */}
               {isLoading && (
                 <View style={styles.loadingContainer}>
                   <Text style={[styles.loadingText, { color: colors.text }]}>
@@ -460,7 +742,6 @@ export default function UploadScreen() {
                 </View>
               )}
 
-              {/* Botones de acción */}
               {videoUri && !isLoading && (
                 <View style={styles.buttonRow}>
                   <TouchableOpacity
@@ -493,7 +774,6 @@ export default function UploadScreen() {
                 </View>
               )}
 
-              {/* Pasos / Instrucciones */}
               <View style={styles.stepsContainer}>
                 <View style={[styles.stepBox, { backgroundColor: isDarkMode ? colors.card : '#D1D5DB', borderColor: colors.border }]}>
                   <Text style={[styles.stepTitle, { color: colors.text }]}>{t.upload.step1}</Text>
@@ -603,7 +883,6 @@ const styles = StyleSheet.create({
   imageWrapper: { overflow: 'hidden', borderRadius: 8 },
   zoomHint: { fontSize: 11, textAlign: 'center', marginTop: 4 },
   imageContainer: { position: 'relative', alignSelf: 'center' },
-  // Marcador tipo cruceta
   crosshair: { position: 'absolute', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   chHLine:   { position: 'absolute', width: 32, height: 1.5 },
   chVLine:   { position: 'absolute', width: 1.5, height: 32 },
@@ -630,4 +909,29 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   btnSecondaryText: { fontSize: 14 },
+
+  // ── Ajuste de encuadre ──
+  adjWrapper: {
+    alignSelf: 'center',
+    overflow: 'hidden',
+    borderRadius: 8,
+    backgroundColor: '#000',
+  },
+  adjLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  adjLoadingText: { fontSize: 13 },
+  gridLineH: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.65)',
+  },
+  gridLineV: {
+    position: 'absolute',
+    width: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.65)',
+  },
 });

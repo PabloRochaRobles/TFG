@@ -1,3 +1,4 @@
+import { deleteVideo, listVideos } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,7 +32,19 @@ export default function SettingsScreen() {
       t.settings.deleteVideosConfirm,
       [
         { text: t.settings.cancel, style: 'cancel' },
-        { text: t.settings.delete, onPress: () => console.log('Videos eliminados'), style: 'destructive' },
+        {
+          text: t.settings.delete,
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const videos = await listVideos();
+              await Promise.all(videos.map((v) => deleteVideo(v)));
+              Alert.alert(t.settings.deleteVideos, t.settings.deleteVideosSuccess);
+            } catch {
+              Alert.alert('Error', t.settings.deleteVideosError);
+            }
+          },
+        },
       ]
     );
   };
@@ -131,48 +144,6 @@ export default function SettingsScreen() {
             ))}
           </View>
 
-          {/* Sección: Notificaciones */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.notifications}</Text>
-
-            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="notifications" size={24} color={colors.textSecondary} />
-                <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.pushNotifications}</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.pushNotificationsDesc}</Text>
-                </View>
-              </View>
-              <Switch
-                value={notifications}
-                onValueChange={setNotifications}
-                trackColor={{ false: '#d1d5db', true: colors.primary }}
-                thumbColor={notifications ? '#fff' : '#f3f4f6'}
-              />
-            </View>
-          </View>
-
-          {/* Sección: Análisis */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.gameAnalysis}</Text>
-
-            <View style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="flash" size={24} color={colors.textSecondary} />
-                <View style={styles.settingTextContainer}>
-                  <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.autoAnalysis}</Text>
-                  <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{t.settings.autoAnalysisDesc}</Text>
-                </View>
-              </View>
-              <Switch
-                value={autoAnalysis}
-                onValueChange={setAutoAnalysis}
-                trackColor={{ false: '#d1d5db', true: colors.primary }}
-                thumbColor={autoAnalysis ? '#fff' : '#f3f4f6'}
-              />
-            </View>
-          </View>
-
           {/* Sección: Almacenamiento */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.storage}</Text>
@@ -228,13 +199,6 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="star-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.rateApp}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
           </View>
 
           {/* Versión */}

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useState } from 'react';
@@ -11,7 +11,6 @@ import { useTranslation } from '@/hooks/use-translation';
 
 export default function CameraScreen() {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const cameraRef = useRef<CameraView>(null);
   const [isRecording, setIsRecording] = useState(false);
   const t = useTranslation();
@@ -19,9 +18,10 @@ export default function CameraScreen() {
   const navigation = useNavigation();
   const colors = useThemeColors();
 
-  if (!cameraPermission || !micPermission) return <View />;
+  {/* Permisos de la cámara */}
+  if (!cameraPermission) return <View />;
 
-  if (!cameraPermission.granted || !micPermission.granted) {
+  if (!cameraPermission.granted) {
     return (
       <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
         <Text style={[styles.permissionText, { color: colors.text }]}>
@@ -30,7 +30,6 @@ export default function CameraScreen() {
         <Button
           onPress={async () => {
             if (!cameraPermission.granted) await requestCameraPermission();
-            if (!micPermission.granted) await requestMicPermission();
           }}
           title={t.camera.grantPermissions}
         />
@@ -38,6 +37,7 @@ export default function CameraScreen() {
     );
   }
 
+  {/* Grabación de la cámara */}
   const handleRecord = async () => {
     if (!cameraRef.current) return;
 
@@ -62,7 +62,8 @@ export default function CameraScreen() {
     <>
       <StatusBar style="light" />
       <View style={styles.container}>
-        {/* Header sobre la cámara */}
+
+        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.menuButton}
@@ -75,7 +76,7 @@ export default function CameraScreen() {
 
         <CameraView style={styles.camera} ref={cameraRef} mode="video" />
 
-        {/* Controles */}
+        {/* Botón para grabar */}
         <View style={styles.controlsOverlay}>
           {isRecording && (
             <Text style={styles.recordingText}>{t.camera.recording}</Text>

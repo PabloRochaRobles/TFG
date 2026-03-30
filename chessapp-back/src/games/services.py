@@ -529,6 +529,17 @@ def refine_warp_with_grid(warped):
         return warped
 
 
+def get_warped_frame_preview(video_path, corners_rel):
+    """Devuelve el primer frame warpeado con las esquinas relativas dadas (para previsualización)."""
+    frame = get_first_frame(video_path)
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    corners = np.float32([[rx * w, ry * h] for rx, ry in corners_rel])
+    mat = get_matriz(corners)
+    return cv2.warpPerspective(frame, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+
+
 def get_initial_board_frame(video_path, corners):
     """
     Obtiene el primer frame del video con la transformación de perspectiva aplicada
@@ -787,6 +798,15 @@ def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
     consecutive_failures = 0          # Fallos consecutivos sin detectar movimiento
     MAX_FAILURES   = 5                # Tras este nº de fallos seguidos se imprime aviso
 
+    # Limpiar imágenes de debug de ejecuciones anteriores
+    if os.path.isdir(DEBUG_LOCATION):
+        for f in os.listdir(DEBUG_LOCATION):
+            if f.startswith("frame_pair_") and f.endswith(".jpg"):
+                try:
+                    os.remove(os.path.join(DEBUG_LOCATION, f))
+                except Exception:
+                    pass
+
     total_steps = max(1, len(all_frames) - 1)
     for i in range(total_steps):
         if progress_key:
@@ -800,9 +820,8 @@ def frames_to_fens(all_frames, initial_fen=None, progress_key=None):
             print(f"[FEN] Frame {i}→{i+1}: {len(changed)} celdas cambiadas → "
                   f"casillas {[chess.square_name(s) for s in squares]}")
 
-            # Guardar debug de los 8 primeros pares para inspección visual
-            if i < 8:
-                _save_frame_pair_debug(i, frame_a, frame_b, changed)
+            # Guardar debug de todos los pares para inspección visual
+            _save_frame_pair_debug(i, frame_a, frame_b, changed)
 
             if not changed:
                 print(f"[FEN] Sin cambios detectados, manteniendo FEN anterior")
@@ -891,7 +910,7 @@ def _save_frame_pair_debug(idx, frame_a, frame_b, changed_indices):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         cv2.putText(collage, f"Frame {idx+1} (despues)", (510, 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        save_debug_image(f"frame_pair_{idx:02d}", collage)
+        save_debug_image(f"frame_pair_{idx:03d}", collage)
     except Exception as e:
         print(f"[DEBUG] _save_frame_pair_debug falló: {e}")
 
