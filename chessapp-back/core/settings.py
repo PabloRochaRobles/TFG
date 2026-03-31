@@ -28,6 +28,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
+    '192.168.1.154',  # IP local para pruebas en red WiFi
     '.ngrok-free.app',
     '.ngrok-free.dev',
     '.ngrok.io',
@@ -142,4 +143,13 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Subida de ficheros ────────────────────────────────────────────────────────
+# Forzar streaming a disco desde el primer byte: evita que vídeos grandes se
+# almacenen temporalmente en RAM antes de volcarse al disco.
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
+# Sin límite de RAM para uploads (todo va a disco directamente).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB (irrelevante con TemporaryFileUploadHandler)
 

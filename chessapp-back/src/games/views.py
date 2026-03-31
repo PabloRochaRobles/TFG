@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from django.core.files.storage import FileSystemStorage
 import os
+import shutil
 import uuid
 
 from .serializers import VideoUploadSerializer
@@ -48,13 +49,28 @@ class VideoUploadView(APIView):
             # Creación de un nombre único.
             file_extension = os.path.splitext(video_file.name)[1]                           # Extracción de la extensión del archivo
             unique_file_name = str(uuid.uuid4()) + file_extension                           # Creación de un nombre con un identificador único
-            saved_file_name = fs_video.save(unique_file_name, video_file)                         # Se guarda el archivo
+            dest_dir = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_path = os.path.join(dest_dir, unique_file_name)
+
+            # En Windows no se puede mover un fichero abierto ni cerrarlo sin que
+            # Django lo elimine. Usamos shutil.copy2() (solo lectura sobre el origen)
+            # y dejamos que Django limpie el temporal al finalizar la petición.
+            if hasattr(video_file, 'temporary_file_path'):
+                shutil.copy2(video_file.temporary_file_path(), dest_path)
+            else:
+                with open(dest_path, 'wb') as out:
+                    for chunk in video_file.chunks(chunk_size=8 * 1024 * 1024):
+                        out.write(chunk)
+
+            saved_file_name = unique_file_name
             partida_id = str(uuid.uuid4())                                                  # Generación de un ID único para la partida
 
             return Response({'file': saved_file_name, 'id': partida_id, 'message': "Video subido con éxito."}, status=status.HTTP_201_CREATED)  # Se notifica del nombre del archivo, el ID de la partida, mensaje de que el video se ha subido y status 201 CREATED
 
-        except Exception as e:                                                              # En caso de fallo, salta la excepción
-            return Response({'error': "Fallo del servidor durante el almacenamiento."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)     # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
+        except Exception as e:
+            print(f"[UPLOAD] Error al guardar el vídeo: {e}")
+            return Response({'error': "Fallo del servidor durante el almacenamiento."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AnalyzeVideoView(APIView):
 

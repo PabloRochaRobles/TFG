@@ -25,6 +25,26 @@ import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { useTheme } from '../../contexts/ThemeContext';
 
+// ── Compresión de vídeo ───────────────────────────────────────────────────────
+// Usa react-native-compressor si está disponible (Development Build / producción).
+// En Expo Go el require falla silenciosamente y se sube el vídeo original.
+async function compressVideoSafe(
+  uri: string,
+  onProgress: (pct: number) => void,
+): Promise<string> {
+  try {
+    const { Video } = require('react-native-compressor');
+    return await Video.compress(
+      uri,
+      { compressionMethod: 'auto', maxSize: 1280, bitrate: 1_500_000 },
+      (progress: number) => onProgress(Math.round(progress * 100)),
+    );
+  } catch {
+    // Módulo no disponible (Expo Go) → subir sin comprimir
+    return uri;
+  }
+}
+
 // ── Calibración ──────────────────────────────────────────────────────────────
 const CORNER_ORDER = [
   { key: 'TL', square: 'a1', label: 'Superior-Izq  (a1)', color: '#22c55e' },
@@ -132,6 +152,8 @@ export default function UploadScreen() {
   const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionProgress, setCompressionProgress] = useState(0);
 
   // Estado de calibración
   const [corners, setCorners] = useState<Corner[]>([]);
@@ -242,10 +264,15 @@ export default function UploadScreen() {
     try {
       setPhase('uploading');
       setUploadProgress(0);
-      const uploadResult = await uploadVideo(videoUri, videoFileName, setUploadProgress);
+      setIsCompressing(true);
+      setCompressionProgress(0);
+      const uriToUpload = await compressVideoSafe(videoUri, setCompressionProgress);
+      setIsCompressing(false);
+      const uploadResult = await uploadVideo(uriToUpload, videoFileName, setUploadProgress);
       setSavedFileName(uploadResult.file);
       setPhase('uploaded');
     } catch (err: any) {
+      setIsCompressing(false);
       setPhase('error');
       Alert.alert('Error', err.message ?? 'Ha ocurrido un error inesperado');
     }
@@ -733,11 +760,22 @@ export default function UploadScreen() {
               {isLoading && (
                 <View style={styles.loadingContainer}>
                   <Text style={[styles.loadingText, { color: colors.text }]}>
-                    {t.upload.uploading} {uploadProgress}%
+                    {isCompressing
+                      ? `${t.upload.compressing} ${compressionProgress}%`
+                      : `${t.upload.uploading} ${uploadProgress}%`}
                   </Text>
                   <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-                    <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: uploadProgress }]} />
-                    <View style={{ flex: 100 - uploadProgress }} />
+                    {isCompressing ? (
+                      <>
+                        <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: compressionProgress }]} />
+                        <View style={{ flex: 100 - compressionProgress }} />
+                      </>
+                    ) : (
+                      <>
+                        <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: uploadProgress }]} />
+                        <View style={{ flex: 100 - uploadProgress }} />
+                      </>
+                    )}
                   </View>
                 </View>
               )}

@@ -1,8 +1,20 @@
-export const API_BASE_URL = 'https://conjugated-quintan-michel.ngrok-free.dev';
+// ── Configuración de entorno ──────────────────────────────────────────────────
+// Cambia LOCAL_MODE a true para usar la red WiFi local (subida instantánea).
+// Cambia LOCAL_MODE a false para usar ngrok (acceso desde fuera de la red).
+//
+// Para obtener tu IP local en Windows: ejecuta `ipconfig` en la terminal
+// y busca "Dirección IPv4" bajo tu adaptador WiFi (p.ej. 192.168.1.42).
+const LOCAL_MODE = true;
+const LOCAL_IP   = '192.168.1.154';
+const LOCAL_PORT = '8000';
 
-const HEADERS = {
-  'ngrok-skip-browser-warning': 'true',
-};
+export const API_BASE_URL = LOCAL_MODE
+  ? `http://${LOCAL_IP}:${LOCAL_PORT}`
+  : 'https://conjugated-quintan-michel.ngrok-free.dev';
+
+const HEADERS: Record<string, string> = LOCAL_MODE
+  ? {}
+  : { 'ngrok-skip-browser-warning': 'true' };
 
 export function uploadVideo(
   videoUri: string,

@@ -17,12 +17,104 @@ DEBUG_LOCATION           = os.path.join(settings.MEDIA_ROOT, 'debug')
 FENS_LOCATION            = os.path.join(settings.MEDIA_ROOT, 'fens')
 ENGINE_ANALYSIS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'engine_analysis')
 CORNERS_CONFIG_PATH      = os.path.join(settings.MEDIA_ROOT, 'corners_config.json')
+FRAMES_CONFIG_PATH       = os.path.join(settings.MEDIA_ROOT, 'frames_config.json')
 
 NORMALIZED_SIZE = 1000
 PUNTOS_ORIGEN = []
 MAX_PUNTOS = 4
 VENTANA_NOMBRE = 'Selecciona las 4 Esquinas del Tablero'
 CELL_CHANGE_THRESHOLD = 10          # Diferencia media de píxeles para considerar una celda cambiada
+
+# ROI interior de cada celda para el análisis de cambios.
+# Las piezas tienen altura y su parte superior sangra hacia la celda adyacente
+# incluso después del warp (el warp sólo corrige el plano del tablero).
+# Recortando los bordes superior e inferior de cada celda se analiza sólo la
+# zona donde realmente reside la base de la pieza.
+#
+# Fracción del alto de la celda a descartar por arriba (0.0–1.0).
+# Subir si las cimas de piezas altas contaminan la celda de encima.
+CELL_ROI_TOP    = 0.25
+# Fracción del alto de la celda a descartar por abajo (0.0–1.0, debe ser > CELL_ROI_TOP).
+# Bajar para incluir más zona inferior si las piezas no se detectan.
+CELL_ROI_BOTTOM = 0.92
+
+# -----------------------------------------
+# Parámetros de captura de frames clave (defaults)
+# Todos pueden sobreescribirse en media/frames_config.json sin tocar código.
+# -----------------------------------------
+#
+# THRESHOLD_PIXEL_BINARY (int, 1–50, default 15)
+#   Umbral de binarización sobre la diferencia absoluta entre frames consecutivos.
+#   Más bajo → detecta movimientos más sutiles (más ruido).
+#   Más alto → sólo detecta movimientos grandes (menos ruido, puede perder piezas pequeñas).
+#
+# THRESHOLD_START (int, default 1200)
+#   Nº de píxeles "distintos" (tras binarización) para declarar inicio de movimiento.
+#   Más bajo → empieza a detectar antes (más sensible, puede activarse con sombras).
+#   Más alto → sólo activa con movimientos claros (puede perderse el inicio de un gesto rápido).
+#
+# THRESHOLD_END (int, default 600)
+#   Nº de píxeles distintos por debajo del cual el frame se considera "estable".
+#   Más bajo → exige más calma antes de declarar estabilidad (frame más limpio, más tarde).
+#   Más alto → acepta estabilidad antes (captura más rápido, pero la mano puede seguir en cuadro).
+#
+# STABILITY_FRAMES (int, default 6)
+#   Frames consecutivos estables requeridos para capturar el frame clave.
+#   Más alto → espera más tiempo a que el tablero repose (imagen más limpia).
+#   Más bajo → captura antes (riesgo de coger la pieza a medio posicionar o la mano aún visible).
+#
+# MIN_CHANGE_FROM_REF (int, default 1500)
+#   Diferencia mínima contra la última posición estable de referencia para confirmar
+#   que hubo un movimiento real (filtra falsas alarmas por iluminación o vibración).
+#   Más alto → más estricto (puede ignorar movimientos sutiles).
+#   Más bajo → acepta más cambios como movimiento real (más falsos positivos).
+#
+# REF_PIXEL_BINARY (int, 1–50, default 25)
+#   Umbral de binarización para la comparación contra la referencia (min_change_from_ref).
+#   Más bajo → la comparación de referencia es más sensible.
+#   Más alto → más resistente a cambios globales de iluminación en la confirmación.
+#
+# LOG_INTERVAL (int, default 300)
+#   Cada cuántos frames se imprime una línea de estadísticas en la consola.
+#   Bajar a 30–60 para diagnóstico fino; subir a 600 para producción.
+#
+# COOLDOWN_FRAMES (int, default 20)
+#   Frames a ignorar tras capturar un frame clave antes de reanudar la detección.
+#   Evita que una misma jugada (p.ej. soltar la pieza lentamente) se capture dos veces.
+#   Más alto → mayor separación mínima entre capturas (menos duplicados, puede perder jugadas rápidas).
+#   Más bajo → permite capturas más seguidas (más sensible, mayor riesgo de duplicados).
+
+_FRAMES_DEFAULTS: dict = {
+    "THRESHOLD_PIXEL_BINARY": 15,
+    "THRESHOLD_START":        1200,
+    "THRESHOLD_END":          600,
+    "STABILITY_FRAMES":       6,
+    "MIN_CHANGE_FROM_REF":    1500,
+    "REF_PIXEL_BINARY":       25,
+    "LOG_INTERVAL":           300,
+    "COOLDOWN_FRAMES":        20,
+}
+
+def load_frames_config() -> dict:
+    """
+    Carga media/frames_config.json y lo mezcla con los defaults.
+    Las claves ausentes usan el valor por defecto.
+    Llamar en cada análisis para que los cambios al JSON surtan efecto sin reiniciar.
+    """
+    cfg = dict(_FRAMES_DEFAULTS)
+    try:
+        if os.path.exists(FRAMES_CONFIG_PATH):
+            with open(FRAMES_CONFIG_PATH, 'r') as f:
+                overrides = json.load(f)
+            for k, v in overrides.items():
+                if k in cfg:
+                    cfg[k] = v
+                    print(f"[CONFIG] frames_config: {k} = {v}")
+                else:
+                    print(f"[CONFIG] frames_config: clave desconocida ignorada → '{k}'")
+    except Exception as e:
+        print(f"[CONFIG] No se pudo cargar frames_config.json: {e} — usando defaults")
+    return cfg
 
 # -----------------------------------------
 # Progreso de análisis (por clave de vídeo)
@@ -149,16 +241,23 @@ def extract_key_frames(video_path, coords, progress_key=None):
     frames_since_motion = 0         # Frames consecutivos de estabilidad desde el último movimiento
     motion_detected = False         # Indica si actualmente se está detectando un movimiento
 
-    # ── Umbrales ───────────────────────────────────────────────────────────────
-    # Se usa diferencia entre frames consecutivos para detectar movimiento y estabilidad.
-    # Vista lateral: las piezas son objetos 3D que se proyectan en el plano de la cámara,
-    # por lo que los diffs pueden ser más variables que desde una vista cenital.
-    threshold_start     = 1200      # Píxeles distintos entre frames consecutivos para detectar inicio
-    threshold_end       = 600       # Píxeles distintos entre frames consecutivos para considerar estabilidad (bajado de 800)
-    stability_frames    = 6         # Frames consecutivos estables necesarios para guardar frame clave (bajado de 12)
-    min_change_from_ref = 1500      # Diff mínima contra referencia para confirmar movimiento real (bajado de 2000)
-    log_interval        = 300       # Cada cuántos frames imprimir estadísticas de diff
+    # ── Umbrales (cargados desde media/frames_config.json o defaults) ──────────
+    cfg                 = load_frames_config()
+    pixel_binary        = cfg["THRESHOLD_PIXEL_BINARY"]
+    threshold_start     = cfg["THRESHOLD_START"]
+    threshold_end       = cfg["THRESHOLD_END"]
+    stability_frames    = cfg["STABILITY_FRAMES"]
+    min_change_from_ref = cfg["MIN_CHANGE_FROM_REF"]
+    ref_pixel_binary    = cfg["REF_PIXEL_BINARY"]
+    log_interval        = cfg["LOG_INTERVAL"]
+    cooldown_frames     = cfg["COOLDOWN_FRAMES"]
     frame_count         = 0         # Contador de frames procesados
+    cooldown_remaining  = 0         # Frames restantes de cooldown tras la última captura
+
+    print(f"[CONFIG] Parámetros de captura: pixel_binary={pixel_binary} "
+          f"start={threshold_start} end={threshold_end} "
+          f"stability={stability_frames} min_ref={min_change_from_ref} "
+          f"ref_binary={ref_pixel_binary} cooldown={cooldown_frames}")
 
     mat   = get_matriz(coords)
     video = open_video(video_path)
@@ -183,9 +282,15 @@ def extract_key_frames(video_path, coords, progress_key=None):
         frame_curr_warped = cv2.warpPerspective(frame_curr, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
         blur_curr = process_image(frame_curr_warped)
 
+        # Cooldown: ignorar detección durante N frames tras una captura para evitar duplicados
+        if cooldown_remaining > 0:
+            cooldown_remaining -= 1
+            blur_prev = blur_curr
+            continue
+
         # Diferencia entre frames consecutivos: detecta movimiento activo entre fotogramas adyacentes
         consec_diff  = cv2.absdiff(blur_prev, blur_curr)
-        _, consec_thresh = cv2.threshold(consec_diff, 15, 255, cv2.THRESH_BINARY)
+        _, consec_thresh = cv2.threshold(consec_diff, pixel_binary, 255, cv2.THRESH_BINARY)
         consec_area  = int(np.sum(consec_thresh > 0))
 
         # Log periódico para calibrar umbrales: imprime el diff en reposo cada log_interval frames
@@ -211,13 +316,14 @@ def extract_key_frames(video_path, coords, progress_key=None):
             if frames_since_motion >= stability_frames:                     # Tablero estabilizado tras el movimiento
                 # Confirmar movimiento real comparando contra la última posición estable de referencia
                 ref_diff = cv2.absdiff(blur_ref, blur_curr)
-                _, ref_thresh = cv2.threshold(ref_diff, 25, 255, cv2.THRESH_BINARY)
+                _, ref_thresh = cv2.threshold(ref_diff, ref_pixel_binary, 255, cv2.THRESH_BINARY)
                 ref_area = int(np.sum(ref_thresh > 0))
 
                 if ref_area > min_change_from_ref:
                     key_frames.append(frame_curr_warped.copy())             # Guardar frame clave
                     blur_ref = blur_curr.copy()                             # Nueva referencia = posición actual
-                    print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area})")
+                    cooldown_remaining = cooldown_frames                    # Iniciar cooldown
+                    print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area}) → cooldown {cooldown_frames} frames")
                 else:
                     print(f"[FRAMES] Movimiento ignorado como falsa alarma (ref_area={ref_area})")
 
@@ -571,10 +677,19 @@ def get_initial_board_frame(video_path, corners):
 # Comparación de celdas del tablero para detección de movimientos
 # -----------------------------------------
 
-def get_board_cells(board_image):
-    """Divide la imagen del tablero (NORMALIZED_SIZE × NORMALIZED_SIZE) en 64 celdas 8×8."""
-    cs = NORMALIZED_SIZE // 8
-    return [board_image[r*cs:(r+1)*cs, c*cs:(c+1)*cs] for r in range(8) for c in range(8)]
+def get_board_cells(board_image, roi_top=CELL_ROI_TOP, roi_bottom=CELL_ROI_BOTTOM):
+    """
+    Divide la imagen del tablero (NORMALIZED_SIZE × NORMALIZED_SIZE) en 64 celdas 8×8.
+
+    Aplica un recorte vertical (roi_top, roi_bottom) dentro de cada celda para
+    ignorar la zona donde las cimas de piezas altas sangran desde filas adyacentes
+    debido a la perspectiva residual tras el warp. Sólo se analiza la franja
+    [roi_top·cs, roi_bottom·cs] de cada celda, que corresponde a la base de la pieza.
+    """
+    cs  = NORMALIZED_SIZE // 8
+    t   = int(cs * roi_top)
+    b   = int(cs * roi_bottom)
+    return [board_image[r*cs + t : r*cs + b, c*cs:(c+1)*cs] for r in range(8) for c in range(8)]
 
 
 def get_changed_cells(frame_before, frame_after, threshold=CELL_CHANGE_THRESHOLD):

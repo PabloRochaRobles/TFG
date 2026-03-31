@@ -27,6 +27,7 @@ export const translations = {
     upload: {
       title: 'Subir Video',
       tapToSelect: 'Toca para seleccionar un vídeo',
+      compressing: 'Comprimiendo vídeo...',
       uploading: 'Subiendo video...',
       permissionDenied: 'Permiso denegado',
       galleryPermission: 'Se necesitan permisos para acceder a la galería',
@@ -217,6 +218,7 @@ export const translations = {
     upload: {
       title: 'Upload Video',
       tapToSelect: 'Tap to select a video',
+      compressing: 'Compressing video...',
       uploading: 'Uploading video...',
       permissionDenied: 'Permission Denied',
       galleryPermission: 'Permissions needed to access gallery',
