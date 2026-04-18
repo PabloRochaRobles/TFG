@@ -89,9 +89,29 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
         # 5. Guardar frames clave
         save_key_frames(key_frames, analysis_id)
 
-        # 6. Generar FENs con YOLOv8 (progreso 50→100)
+        # 6. Generar FENs con YOLOv8 (progreso 50→100) con streaming parcial
         all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
-        fens = frames_to_fens_yolo(all_frames, progress_key=file_name)
+
+        fens_stream_key = f'analysis_task_{task_id}_fens'
+        streaming_fens = [chess.STARTING_FEN]
+        last_streamed = chess.STARTING_FEN
+        cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
+
+        def _on_fen(fen: str, _index: int):
+            nonlocal last_streamed
+            if fen != last_streamed:
+                streaming_fens.append(fen)
+                last_streamed = fen
+                cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
+
+        fens = frames_to_fens_yolo(all_frames, progress_key=file_name, on_fen=_on_fen)
+
+        # Eliminar FENs duplicados consecutivos (frames donde no se detectó movimiento)
+        fens_uniq = [fens[0]] if fens else []
+        for f in fens[1:]:
+            if f != fens_uniq[-1]:
+                fens_uniq.append(f)
+        fens = fens_uniq
 
         set_progress(file_name, 100)
         save_fens(fens, analysis_id)
@@ -331,8 +351,9 @@ class AnalysisChainView(APIView):
 
             try:
                 chess.Board(current_fen)
-            except ValueError:
-                results.append({'initial_fen': fen, 'error': f'FEN no válido: {fen}'})
+            except ValueError as fen_err:
+                print(f"[ENGINE] FEN inválido: {current_fen!r} — {fen_err}")
+                results.append({'initial_fen': fen, 'error': f'FEN no válido: {fen_err}', 'chain': []})
                 continue
 
             for step in range(1, depth + 1):
@@ -359,7 +380,11 @@ class AnalysisChainView(APIView):
                     current_fen = consensus['new_fen']
 
                 except Exception as exc:
-                    chain.append({'step': step, 'error': str(exc)})
+                    import traceback as _tb
+                    err_msg = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+                    print(f"[ENGINE] Error en step {step} (fen={current_fen!r}): {err_msg}")
+                    _tb.print_exc()
+                    chain.append({'step': step, 'error': err_msg})
                     break
 
             results.append({'initial_fen': fen.strip(), 'chain': chain})

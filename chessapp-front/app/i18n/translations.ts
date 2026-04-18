@@ -101,6 +101,7 @@ export const translations = {
       majorityAgreement: 'Mayoría',
       tiebreaker: 'Desempate',
       noAnalysis: 'No hay análisis disponible para esta posición',
+      engineError: 'Error del motor',
     },
     settings: {
       title: 'Ajustes',
@@ -292,6 +293,7 @@ export const translations = {
       majorityAgreement: 'Majority',
       tiebreaker: 'Tiebreaker',
       noAnalysis: 'No analysis available for this position',
+      engineError: 'Engine error',
     },
     settings: {
       title: 'Settings',

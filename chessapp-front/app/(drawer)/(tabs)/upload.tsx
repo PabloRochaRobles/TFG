@@ -176,6 +176,7 @@ export default function UploadScreen() {
   const imgDH   = useSharedValue(1);
   const [zoomLevel, setZoomLevel] = useState(1);
 
+
   // Estado de ajuste de encuadre
   const adjSize = cw;                              // contenedor cuadrado
   const [warpedPreviewUri, setWarpedPreviewUri] = useState<string | null>(null);
@@ -349,8 +350,8 @@ export default function UploadScreen() {
 
   const tapGesture = Gesture.Tap().onEnd((e) => {
     'worklet';
-    const vx = (e.x - cw / 2 - tx.value) / scale.value + cw / 2;
-    const vy = (e.y - ch / 2 - ty.value) / scale.value + ch / 2;
+    const vx = e.x;
+    const vy = e.y;
     const ix = vx - imgOffX.value;
     const iy = vy - imgOffY.value;
     if (ix < 0 || iy < 0 || ix > imgDW.value || iy > imgDH.value) return;

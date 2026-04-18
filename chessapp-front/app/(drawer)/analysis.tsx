@@ -88,15 +88,46 @@ export default function AnalysisScreen() {
   const t = useTranslation();
 
   const [phase, setPhase] = useState<Phase>('analyzing');
-  const [analysisStep, setAnalysisStep] = useState<'video' | 'engine'>('video');
   const [totalFrames, setTotalFrames] = useState<number>(0);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [fens, setFens] = useState<string[]>([]);
-  const [engineAnalysis, setEngineAnalysis] = useState<PositionAnalysis[]>([]);
+  const [engineAnalysis, setEngineAnalysis] = useState<(PositionAnalysis | null)[]>([]);
   const [currentMove, setCurrentMove] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
-  // Referencia a la función que cierra el WebSocket si el componente se desmonta
   const disconnectWsRef = useRef<(() => void) | null>(null);
+
+  // Pipeline: bounded concurrency for engine analysis
+  const MAX_CONCURRENT = 2;
+  const fensRef          = useRef<string[]>([]);
+  const engineRef        = useRef<(PositionAnalysis | null)[]>([]);
+  const pendingQueueRef  = useRef<{ fen: string; index: number }[]>([]);
+  const activeCountRef   = useRef(0);
+  const processNextRef   = useRef<() => void>(() => {});
+
+  processNextRef.current = () => {
+    while (activeCountRef.current < MAX_CONCURRENT && pendingQueueRef.current.length > 0) {
+      const item = pendingQueueRef.current.shift()!;
+      activeCountRef.current++;
+      analysisChain([item.fen], 5)
+        .then((result) => {
+          activeCountRef.current--;
+          engineRef.current[item.index] = result[0] ?? null;
+          setEngineAnalysis([...engineRef.current]);
+          processNextRef.current();
+        })
+        .catch(() => {
+          activeCountRef.current--;
+          processNextRef.current();
+        });
+    }
+  };
+
+  const enqueueFen = (fen: string, index: number) => {
+    engineRef.current[index] = null;
+    setEngineAnalysis([...engineRef.current]);
+    pendingQueueRef.current.push({ fen, index });
+    processNextRef.current();
+  };
 
   const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
@@ -104,64 +135,70 @@ export default function AnalysisScreen() {
     if (file) runAnalysis();
   }, [file]);
 
-  const runEngineAnalysis = async (detectedFens: string[], analisisId: string) => {
-    setAnalysisStep('engine');
-    const cached = await getEngineAnalysis(analisisId);
-    if (cached) {
-      setEngineAnalysis(cached);
-    } else {
-      const engineResults: PositionAnalysis[] = [];
-      for (const fen of detectedFens) {
-        const step = await analysisChain([fen], 5);
-        if (step.length > 0) engineResults.push(step[0]);
-      }
-      setEngineAnalysis(engineResults);
-      saveEngineAnalysis(analisisId, engineResults); // fire-and-forget
-    }
-  };
-
   const runAnalysis = () => {
     setPhase('analyzing');
-    setAnalysisStep('video');
     setCurrentMove(0);
     setAnalysisProgress(0);
+    setFens([]);
     setEngineAnalysis([]);
+    fensRef.current        = [];
+    engineRef.current      = [];
+    pendingQueueRef.current = [];
+    activeCountRef.current  = 0;
 
     const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
 
-    // analyzeVideoWithProgress gestiona internamente el WebSocket y el caso de caché.
-    // Devuelve una función para cancelar/desconectar si el componente se desmonta.
     disconnectWsRef.current = analyzeVideoWithProgress(
       file as string,
       corners,
-      // onProgress: actualiza la barra de progreso
       (pct) => setAnalysisProgress(pct),
-      // onComplete: recibe los FENs y continúa con el análisis de motores
       async (analisisId, detectedFens) => {
         setAnalysisProgress(100);
         setTotalFrames(detectedFens.length > 0 ? detectedFens.length - 1 : 0);
         setAnalysisId(analisisId);
-        setFens(detectedFens);
 
-        try {
-          await runEngineAnalysis(detectedFens, analisisId);
-
-          // Guardar info de la última partida analizada para el home
-          const lastGameData: LastGameData = {
-            file: file as string,
-            analysisId: analisisId,
-            moves: detectedFens.length > 0 ? detectedFens.length - 1 : 0,
-            date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
-          };
-          AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
-
-          setPhase('done');
-        } catch {
-          setPhase('error');
+        const cached = await getEngineAnalysis(analisisId);
+        if (cached) {
+          fensRef.current   = [...detectedFens];
+          engineRef.current = [...cached];
+          setFens(detectedFens);
+          setEngineAnalysis([...cached]);
+        } else {
+          fensRef.current = [...detectedFens];
+          setFens(detectedFens);
+          // Queue any FENs not yet received via streaming (e.g. YOLO fallback skipped on_fen)
+          detectedFens.forEach((fen, i) => {
+            if (engineRef.current[i] === undefined) {
+              enqueueFen(fen, i);
+            }
+          });
+          // Save engine results once all analyses finish (fire-and-forget watcher)
+          const checkDone = setInterval(() => {
+            const all = engineRef.current;
+            if (all.length > 0 && all.every((r) => r !== null)) {
+              clearInterval(checkDone);
+              saveEngineAnalysis(analisisId, all as PositionAnalysis[]);
+            }
+          }, 1000);
         }
+
+        const lastGameData: LastGameData = {
+          file:       file as string,
+          analysisId: analisisId,
+          moves:      detectedFens.length > 0 ? detectedFens.length - 1 : 0,
+          date:       new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+        };
+        AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
+
+        setPhase('done');
       },
-      // onError
       (_err) => setPhase('error'),
+      (fen, index) => {
+        // fen_ready: stream FEN and queue engine analysis immediately
+        fensRef.current[index] = fen;
+        setFens([...fensRef.current]);
+        enqueueFen(fen, index);
+      },
     );
   };
 
@@ -210,22 +247,14 @@ export default function AnalysisScreen() {
             <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.analyzing}</Text>
-              {analysisStep === 'video' ? (
-                <>
-                  <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                    {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
-                  </Text>
-                  <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-                    <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: analysisProgress }]} />
-                    <View style={{ flex: 100 - analysisProgress }} />
-                  </View>
-                  <Text style={[styles.progressPct, { color: colors.primary }]}>{analysisProgress}%</Text>
-                </>
-              ) : (
-                <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                  {t.analysis.calculatingMoves}
-                </Text>
-              )}
+              <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
+              </Text>
+              <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: analysisProgress }]} />
+                <View style={{ flex: 100 - analysisProgress }} />
+              </View>
+              <Text style={[styles.progressPct, { color: colors.primary }]}>{analysisProgress}%</Text>
             </View>
           )}
 
@@ -368,16 +397,42 @@ export default function AnalysisScreen() {
                   </View>
                 ) : (() => {
                   const posAnalysis = engineAnalysis[currentMove];
-                  if (!posAnalysis) return (
+                  if (posAnalysis === null) return (
+                    <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                        {t.analysis.calculatingMoves}
+                      </Text>
+                    </View>
+                  );
+                  if (posAnalysis === undefined) return (
                     <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
                       <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
                         {t.analysis.noAnalysis}
                       </Text>
                     </View>
                   );
+                  const validSteps = (posAnalysis.chain ?? []).filter((step) => step.engines != null);
+                  if (validSteps.length === 0) {
+                    const rootError  = (posAnalysis as any).error as string | undefined;
+                    const chainErr   = (posAnalysis.chain ?? []).find((s) => 'error' in (s as any));
+                    const chainErrMsg = chainErr ? (chainErr as any).error as string : undefined;
+                    const hasError   = rootError !== undefined || chainErrMsg !== undefined;
+                    const errorMsg   = rootError ?? chainErrMsg ?? '';
+                    return (
+                      <View style={[styles.pendingBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <Ionicons name="warning-outline" size={32} color="#f59e0b" />
+                        <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                          {hasError
+                            ? `${t.analysis.engineError}: ${errorMsg || 'error desconocido'}`
+                            : t.analysis.noAnalysis}
+                        </Text>
+                      </View>
+                    );
+                  }
                   return (
                     <View style={[styles.engineBox, { backgroundColor: colors.card }]}>
-                      {posAnalysis.chain.filter((step) => step.engines != null).map((step) => {
+                      {validSteps.map((step) => {
                         const agType  = getAgreementType(step);
                         const dots    = getAgreementDots(step);
                         const score   = computeScore(step);

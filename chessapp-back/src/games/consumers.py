@@ -46,6 +46,7 @@ class AnalysisProgressConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.task_id = self.scope['url_route']['kwargs']['task_id']
+        self.fens_sent = 0
         await self.accept()
         logger.info("[WS] Cliente conectado para task_id=%s", self.task_id)
         # Arrancamos el bucle de progreso como tarea asíncrona independiente
@@ -85,6 +86,19 @@ class AnalysisProgressConsumer(AsyncWebsocketConsumer):
             if data is None:
                 # Tarea no iniciada todavía o caché expirada
                 continue
+
+            # Enviar FENs parciales según se generan
+            try:
+                fens_stream = cache.get(f'analysis_task_{self.task_id}_fens') or []
+                while self.fens_sent < len(fens_stream):
+                    await self._safe_send({
+                        'type':  'fen_ready',
+                        'fen':   fens_stream[self.fens_sent],
+                        'index': self.fens_sent,
+                    })
+                    self.fens_sent += 1
+            except Exception as exc:
+                logger.debug("[WS] Error enviando fen_ready: %s", exc)
 
             status = data.get('status', 'processing')
 

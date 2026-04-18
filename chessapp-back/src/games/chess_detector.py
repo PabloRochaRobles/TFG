@@ -57,6 +57,7 @@ un error de detección no se propaga al resto de la partida.
    No es necesario ningún cambio de código para seguir usando la app.
 """
 
+import bisect
 import logging
 import os
 from typing import Optional
@@ -192,6 +193,114 @@ def reset_model_cache() -> None:
     _model_load_attempted = False
 
 
+# ── Detección de la cuadrícula mediante líneas de Hough ──────────────────────
+
+def _cluster_lines(positions: list[float], n: int, img_size: int) -> list[int]:
+    """
+    Agrupa una lista de posiciones en n clusters equiespaciados y devuelve
+    los centroides ordenados. Si hay menos posiciones que clusters, devuelve
+    la cuadrícula uniforme de fallback.
+    """
+    if len(positions) < max(3, n // 2):
+        return [int(round(img_size / n * i)) for i in range(n + 1)]
+
+    arr = np.array(sorted(positions), dtype=float)
+    # Centros iniciales: cuadrícula uniforme
+    centers = np.array([img_size / n * (i + 0.5) for i in range(n)], dtype=float)
+
+    for _ in range(20):
+        dists = np.abs(arr[:, None] - centers[None, :])  # (M, n)
+        labels = np.argmin(dists, axis=1)
+        new_centers = np.array([
+            arr[labels == i].mean() if np.any(labels == i) else centers[i]
+            for i in range(n)
+        ])
+        if np.allclose(centers, new_centers, atol=1.0):
+            break
+        centers = new_centers
+
+    # Convertir centros de celda a bordes de celda (n+1 bordes)
+    centers_sorted = sorted(centers)
+    boundaries = [0]
+    for i in range(len(centers_sorted) - 1):
+        boundaries.append(int(round((centers_sorted[i] + centers_sorted[i + 1]) / 2)))
+    boundaries.append(img_size)
+    return boundaries
+
+
+def detect_grid_from_lines(
+    warped_image: np.ndarray,
+    n_cells: int = 8,
+) -> tuple[list[int], list[int]]:
+    """
+    Detecta las líneas del tablero en la imagen warpeada mediante la transformada
+    de Hough y devuelve (col_boundaries, row_boundaries), listas de n_cells+1
+    posiciones de píxel que delimitan las columnas y filas respectivamente.
+
+    Si la detección falla (pocas líneas visibles), devuelve la cuadrícula
+    uniforme estándar (equivalente al comportamiento anterior).
+    """
+    img_size = warped_image.shape[0]  # Suponemos imagen cuadrada (NORMALIZED_SIZE)
+    uniform = [int(round(img_size / n_cells * i)) for i in range(n_cells + 1)]
+
+    gray  = cv2.cvtColor(warped_image, cv2.COLOR_BGR2GRAY)
+    blur  = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 30, 100)
+
+    min_line_len = img_size // 3   # al menos 1/3 del tablero
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 180,
+        threshold=80,
+        minLineLength=min_line_len,
+        maxLineGap=40,
+    )
+
+    if lines is None or len(lines) < 6:
+        return uniform, uniform
+
+    h_pos: list[float] = []
+    v_pos: list[float] = []
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        dx, dy = abs(x2 - x1), abs(y2 - y1)
+        if dx == 0 and dy == 0:
+            continue
+        angle_deg = abs(np.degrees(np.arctan2(dy, dx)))
+
+        if angle_deg < 20:           # línea casi horizontal
+            h_pos.append((y1 + y2) / 2.0)
+        elif angle_deg > 70:         # línea casi vertical
+            v_pos.append((x1 + x2) / 2.0)
+
+    col_boundaries = _cluster_lines(v_pos, n_cells, img_size) if len(v_pos) >= 3 else uniform
+    row_boundaries = _cluster_lines(h_pos, n_cells, img_size) if len(h_pos) >= 3 else uniform
+
+    logger.debug(
+        "[HOUGH] %d líneas H, %d líneas V → col=%s row=%s",
+        len(h_pos), len(v_pos), col_boundaries, row_boundaries,
+    )
+    return col_boundaries, row_boundaries
+
+
+# ── Caché de cuadrícula por análisis ─────────────────────────────────────────
+# Evita recalcular Hough en cada frame de la misma partida.
+_grid_cache: dict[int, tuple[list[int], list[int]]] = {}
+
+
+def _grid_for_frame(warped_image: np.ndarray) -> tuple[list[int], list[int]]:
+    """Devuelve la cuadrícula Hough, usando caché basada en shape de la imagen."""
+    key = warped_image.shape[0]
+    if key not in _grid_cache:
+        _grid_cache[key] = detect_grid_from_lines(warped_image)
+    return _grid_cache[key]
+
+
+def invalidate_grid_cache() -> None:
+    """Limpia la caché de cuadrícula (útil entre análisis distintos)."""
+    _grid_cache.clear()
+
+
 # ── Detección de estado del tablero ──────────────────────────────────────────
 
 BoardState = dict[int, str]  # {chess.Square: símbolo_FEN}
@@ -214,6 +323,9 @@ def detect_board_state(warped_image: np.ndarray) -> Optional[BoardState]:
     model = get_model()
     if model is None:
         return None
+
+    # Detectar cuadrícula real con Hough (o cuadrícula uniforme si falla)
+    col_bounds, row_bounds = _grid_for_frame(warped_image)
 
     # Redimensionar a INFERENCE_SIZE para mayor velocidad
     img_small = cv2.resize(warped_image, (INFERENCE_SIZE, INFERENCE_SIZE))
@@ -247,10 +359,11 @@ def detect_board_state(warped_image: np.ndarray) -> Optional[BoardState]:
         if not piece:
             continue
 
-        col = int(x_center / CELL_SIZE)   # índice de rank (0 = rank-1 … 7 = rank-8)
-        row = int(y_center / CELL_SIZE)   # índice de file (0 = file-a … 7 = file-h)
-        col = max(0, min(7, col))
-        row = max(0, min(7, row))
+        # Mapear el centro del bbox a la celda usando los bordes detectados por Hough
+        col = min(bisect.bisect_right(col_bounds, x_center) - 1, 7)
+        row = min(bisect.bisect_right(row_bounds, y_center) - 1, 7)
+        col = max(0, col)
+        row = max(0, row)
 
         square = chess.square(row, col)   # chess.square(file, rank)
         conf   = float(box.conf[0])

@@ -3,6 +3,18 @@
 /media/
 /chessapp-back/misc
 *.jpg
-*.jpg
 *.json
 *.npz
+
+# Entornos virtuales Python
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/

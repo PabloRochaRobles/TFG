@@ -1,8 +1,16 @@
 import json
 import logging
 import os
+import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Daphne/Twisted establece SelectorEventLoopPolicy en Windows, que no soporta
+# subprocess_exec. Forzamos ProactorEventLoop para que los engines UCI puedan
+# lanzar subprocesos desde los hilos del ThreadPoolExecutor.
+if sys.platform == 'win32':
+    import asyncio as _asyncio
+    _asyncio.set_event_loop_policy(_asyncio.WindowsProactorEventLoopPolicy())
 
 import cv2
 import chess
@@ -1155,7 +1163,10 @@ def analysis_best_posStockfish(fen):
 
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
-        best_move = info["pv"][0]
+        pv = info.get("pv") or []
+        if not pv:
+            raise ValueError(f"Stockfish no encontró jugadas para la posición: {fen}")
+        best_move = pv[0]
 
         return {
             "movement_uci": best_move.uci(),
@@ -1186,7 +1197,10 @@ def analysis_best_posObsidian(fen):
 
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
-        best_move = info["pv"][0]
+        pv = info.get("pv") or []
+        if not pv:
+            raise ValueError(f"Obsidian no encontró jugadas para la posición: {fen}")
+        best_move = pv[0]
 
         return {
             "movement_uci": best_move.uci(),
@@ -1218,7 +1232,10 @@ def analysis_best_posPlentyChess(fen):
 
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
-        best_move = info["pv"][0]
+        pv = info.get("pv") or []
+        if not pv:
+            raise ValueError(f"PlentyChess no encontró jugadas para la posición: {fen}")
+        best_move = pv[0]
 
         return {
             "movement_uci": best_move.uci(),
@@ -1315,7 +1332,7 @@ def consensus_analysis(stock, obsidian, plenty, fen):
 # Generación de FENs con YOLOv8 (detección de estado absoluto)
 # -----------------------------------------
 
-def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None):
+def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=None):
     """
     Versión YOLOv8 de frames_to_fens.
 
@@ -1335,11 +1352,14 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None):
 
     Retorna lista de FENs con len(all_frames) elementos.
     """
-    from .chess_detector import is_available, detect_board_state, infer_move_from_states
+    from .chess_detector import is_available, detect_board_state, infer_move_from_states, invalidate_grid_cache
 
     if not is_available():
         logger.info("[FEN-YOLO] Modelo YOLO no disponible — usando detección por deltas")
         return frames_to_fens(all_frames, initial_fen, progress_key)
+
+    # Limpiar cuadrícula cacheada de análisis anteriores
+    invalidate_grid_cache()
 
     logger.info("[FEN-YOLO] Usando YOLOv8 para detección de estado absoluto")
 
@@ -1394,6 +1414,8 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None):
                 san = board.san(move)
                 board.push(move)
                 fens.append(board.fen())
+                if on_fen:
+                    on_fen(board.fen(), len(fens) - 1)
                 consecutive_failures = 0
                 logger.info("[FEN-YOLO] ✓ Movimiento detectado: %s (%s)", san, move.uci())
             else:

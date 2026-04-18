@@ -37,9 +37,10 @@ export type PositionAnalysis  = { initial_fen: string; chain: ChainStep[] };
 
 /** Eventos que puede recibir el callback de watchAnalysis */
 export type AnalysisEvent =
-  | { type: 'progress'; progress: number }
-  | { type: 'complete'; analisis_id: string; total_fens: number; fens: string[]; message: string }
-  | { type: 'error';    error: string };
+  | { type: 'progress';  progress: number }
+  | { type: 'fen_ready'; fen: string; index: number }
+  | { type: 'complete';  analisis_id: string; total_fens: number; fens: string[]; message: string }
+  | { type: 'error';     error: string };
 
 // ── Subida de vídeo ───────────────────────────────────────────────────────────
 
@@ -177,6 +178,7 @@ export function analyzeVideoWithProgress(
   onProgress: (pct: number) => void,
   onComplete: (analisisId: string, fens: string[]) => void,
   onError: (message: string) => void,
+  onFenReady?: (fen: string, index: number) => void,
 ): () => void {
   let disconnectWs: (() => void) | null = null;
 
@@ -198,6 +200,8 @@ export function analyzeVideoWithProgress(
       disconnectWs = watchAnalysis(response.task_id, (event) => {
         if (event.type === 'progress') {
           onProgress(event.progress);
+        } else if (event.type === 'fen_ready') {
+          onFenReady?.(event.fen, event.index);
         } else if (event.type === 'complete') {
           onProgress(100);
           onComplete(event.analisis_id, event.fens);
