@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { analysisChain, analyzeVideo, getAnalysisProgress, getEngineAnalysis, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
+import { analysisChain, analyzeVideoWithProgress, getEngineAnalysis, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -95,7 +95,8 @@ export default function AnalysisScreen() {
   const [engineAnalysis, setEngineAnalysis] = useState<PositionAnalysis[]>([]);
   const [currentMove, setCurrentMove] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Referencia a la función que cierra el WebSocket si el componente se desmonta
+  const disconnectWsRef = useRef<(() => void) | null>(null);
 
   const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
@@ -103,67 +104,69 @@ export default function AnalysisScreen() {
     if (file) runAnalysis();
   }, [file]);
 
-  const runAnalysis = async () => {
-    try {
-      setPhase('analyzing');
-      setAnalysisStep('video');
-      setCurrentMove(0);
-      setAnalysisProgress(0);
-      setEngineAnalysis([]);
-
-      // Paso 1: procesar el vídeo y obtener los FENs
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        const pct = await getAnalysisProgress(file as string);
-        setAnalysisProgress(pct);
-      }, 800);
-
-      const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
-      const result = await analyzeVideo(file as string, corners);
-
-      clearInterval(pollRef.current!);
-      pollRef.current = null;
-      setAnalysisProgress(100);
-
-      const detectedFens = result.fens ?? [];
-      setTotalFrames(result.total_frames);
-      setAnalysisId(result.analisis_id);
-      setFens(detectedFens);
-
-      // Paso 2: calcular las mejores jugadas (o cargar desde caché)
-      setAnalysisStep('engine');
-      const analysisId = result.analisis_id;
-      const cached = await getEngineAnalysis(analysisId);
-      if (cached) {
-        setEngineAnalysis(cached);
-      } else {
-        const engineResults: PositionAnalysis[] = [];
-        for (const fen of detectedFens) {
-          const step = await analysisChain([fen], 5);
-          if (step.length > 0) engineResults.push(step[0]);
-        }
-        setEngineAnalysis(engineResults);
-        saveEngineAnalysis(analysisId, engineResults); // fire-and-forget
+  const runEngineAnalysis = async (detectedFens: string[], analisisId: string) => {
+    setAnalysisStep('engine');
+    const cached = await getEngineAnalysis(analisisId);
+    if (cached) {
+      setEngineAnalysis(cached);
+    } else {
+      const engineResults: PositionAnalysis[] = [];
+      for (const fen of detectedFens) {
+        const step = await analysisChain([fen], 5);
+        if (step.length > 0) engineResults.push(step[0]);
       }
-
-      // Guardar info de la última partida analizada para el home
-      const lastGameData: LastGameData = {
-        file: file as string,
-        analysisId: result.analisis_id,
-        moves: result.total_frames,
-        date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
-      };
-      AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
-
-      setPhase('done');
-    } catch (err: any) {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      setPhase('error');
+      setEngineAnalysis(engineResults);
+      saveEngineAnalysis(analisisId, engineResults); // fire-and-forget
     }
   };
 
-  // Limpia el intervalo si el componente se desmonta durante el análisis
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  const runAnalysis = () => {
+    setPhase('analyzing');
+    setAnalysisStep('video');
+    setCurrentMove(0);
+    setAnalysisProgress(0);
+    setEngineAnalysis([]);
+
+    const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
+
+    // analyzeVideoWithProgress gestiona internamente el WebSocket y el caso de caché.
+    // Devuelve una función para cancelar/desconectar si el componente se desmonta.
+    disconnectWsRef.current = analyzeVideoWithProgress(
+      file as string,
+      corners,
+      // onProgress: actualiza la barra de progreso
+      (pct) => setAnalysisProgress(pct),
+      // onComplete: recibe los FENs y continúa con el análisis de motores
+      async (analisisId, detectedFens) => {
+        setAnalysisProgress(100);
+        setTotalFrames(detectedFens.length > 0 ? detectedFens.length - 1 : 0);
+        setAnalysisId(analisisId);
+        setFens(detectedFens);
+
+        try {
+          await runEngineAnalysis(detectedFens, analisisId);
+
+          // Guardar info de la última partida analizada para el home
+          const lastGameData: LastGameData = {
+            file: file as string,
+            analysisId: analisisId,
+            moves: detectedFens.length > 0 ? detectedFens.length - 1 : 0,
+            date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+          };
+          AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
+
+          setPhase('done');
+        } catch {
+          setPhase('error');
+        }
+      },
+      // onError
+      (_err) => setPhase('error'),
+    );
+  };
+
+  // Cierra el WebSocket si el componente se desmonta durante el análisis
+  useEffect(() => () => { disconnectWsRef.current?.(); }, []);
 
   const copyAnalysisId = () => {
     if (!analysisId) return;
@@ -374,7 +377,7 @@ export default function AnalysisScreen() {
                   );
                   return (
                     <View style={[styles.engineBox, { backgroundColor: colors.card }]}>
-                      {posAnalysis.chain.map((step) => {
+                      {posAnalysis.chain.filter((step) => step.engines != null).map((step) => {
                         const agType  = getAgreementType(step);
                         const dots    = getAgreementDots(step);
                         const score   = computeScore(step);

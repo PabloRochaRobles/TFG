@@ -42,6 +42,9 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Application definition
 
 INSTALLED_APPS = [
+    # daphne DEBE ir primero para sobreescribir el servidor de desarrollo de Django
+    # y arrancar automáticamente el soporte ASGI/WebSocket con 'manage.py runserver'.
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -50,7 +53,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
-    'src.games'
+    'channels',
+    'src.games',
 ]
 
 MIDDLEWARE = [
@@ -83,6 +87,25 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'core.wsgi.application'
+
+# ── Django Channels ───────────────────────────────────────────────────────────
+# Punto de entrada ASGI (combina HTTP + WebSocket)
+ASGI_APPLICATION = 'core.asgi.application'
+
+# Canal en memoria para desarrollo (sin Redis).
+# Para producción con múltiples workers, reemplazar por:
+#   pip install channels-redis
+#   CHANNEL_LAYERS = {
+#       'default': {
+#           'BACKEND': 'channels_redis.core.RedisChannelLayer',
+#           'CONFIG': {'hosts': [('127.0.0.1', 6379)]},
+#       }
+#   }
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    }
+}
 
 
 # Database
@@ -143,6 +166,24 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Cache (compartida entre hilo de análisis y WebSocket consumer) ────────────
+# LocMemCache es thread-safe y no requiere servicios externos.
+# Para producción con múltiples procesos, usar django-redis o memcached.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'chess-analysis-cache',
+    }
+}
+
+# ── YOLOv8 — Detección de piezas ──────────────────────────────────────────────
+# Ruta al modelo entrenado. El sistema usa detección por deltas si no existe.
+CHESS_YOLO_MODEL_PATH = os.path.join(MEDIA_ROOT, 'models', 'chess_yolo.pt')
+# Confianza mínima para aceptar una detección (0.0–1.0). Bajar si se pierden piezas.
+CHESS_YOLO_CONFIDENCE = 0.4
+# Sobrescribir nombres de clase del modelo si difieren del mapa por defecto:
+# CHESS_YOLO_CLASS_MAP = {'my_class_name': 'P', ...}
 
 # ── Subida de ficheros ────────────────────────────────────────────────────────
 # Forzar streaming a disco desde el primer byte: evita que vídeos grandes se

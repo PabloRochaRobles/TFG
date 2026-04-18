@@ -1,6 +1,8 @@
 import json
+import logging
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 import chess
@@ -9,6 +11,8 @@ import numpy as np
 from django.conf import settings
 from rest_framework.response import Response
 from rest_framework import status
+
+logger = logging.getLogger(__name__)
 
 TEMP_VIDEOS_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 TEMP_FRAMES_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
@@ -1223,6 +1227,33 @@ def analysis_best_posPlentyChess(fen):
             "score": info["score"].white().score(mate_score=10000) / 100
         }
 
+def analysis_engines_parallel(fen: str) -> tuple:
+    """
+    Ejecuta los 3 motores de ajedrez en paralelo usando ThreadPoolExecutor.
+
+    En lugar de la secuencia:
+        stock    → 0.1 s
+        obsidian → 0.1 s
+        plenty   → 0.1 s   (total: 0.3 s por paso)
+
+    Los tres corren simultáneamente (~0.1 s por paso → 3× más rápido).
+
+    Devuelve: (resultado_stockfish, resultado_obsidian, resultado_plentychess)
+    """
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(analysis_best_posStockfish,   fen): 'stockfish',
+            executor.submit(analysis_best_posObsidian,    fen): 'obsidian',
+            executor.submit(analysis_best_posPlentyChess, fen): 'plentychess',
+        }
+        results = {}
+        for future in as_completed(futures):
+            name = futures[future]
+            results[name] = future.result()  # Re-lanza excepciones si las hay
+
+    return results['stockfish'], results['obsidian'], results['plentychess']
+
+
 def consensus_analysis(stock, obsidian, plenty, fen):
 
     """
@@ -1278,3 +1309,110 @@ def consensus_analysis(stock, obsidian, plenty, fen):
         "movement_san": move_san,
         "new_fen": board.fen(),
     }
+
+
+# -----------------------------------------
+# Generación de FENs con YOLOv8 (detección de estado absoluto)
+# -----------------------------------------
+
+def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None):
+    """
+    Versión YOLOv8 de frames_to_fens.
+
+    Diferencia clave respecto a la versión original (detección por deltas):
+      - Cada frame es analizado de forma INDEPENDIENTE por YOLO, obteniendo
+        el estado completo del tablero (qué pieza hay en cada casilla).
+      - El movimiento se infiere comparando dos estados absolutos consecutivos,
+        no comparando diferencias de píxeles.
+      - Un error de detección en un frame NO se propaga al siguiente.
+
+    Si el modelo YOLOv8 no está disponible, cae automáticamente en la función
+    original frames_to_fens (detección por deltas).
+
+    Parámetros:
+      all_frames[0]  → posición inicial (antes de cualquier movimiento)
+      all_frames[i]  → posición después del movimiento i
+
+    Retorna lista de FENs con len(all_frames) elementos.
+    """
+    from .chess_detector import is_available, detect_board_state, infer_move_from_states
+
+    if not is_available():
+        logger.info("[FEN-YOLO] Modelo YOLO no disponible — usando detección por deltas")
+        return frames_to_fens(all_frames, initial_fen, progress_key)
+
+    logger.info("[FEN-YOLO] Usando YOLOv8 para detección de estado absoluto")
+
+    if initial_fen is None:
+        initial_fen = chess.STARTING_FEN
+
+    board = chess.Board(initial_fen)
+    fens  = [initial_fen]
+    consecutive_failures = 0
+    MAX_FAILURES = 5
+
+    total_steps = max(1, len(all_frames) - 1)
+
+    for i in range(total_steps):
+        if progress_key:
+            set_progress(progress_key, 50 + int(i / total_steps * 50))
+
+        frame_a = all_frames[i]
+        frame_b = all_frames[i + 1]
+
+        try:
+            # ── Detección YOLO de estado absoluto en ambos frames ─────────────
+            state_before = detect_board_state(frame_a)
+            state_after  = detect_board_state(frame_b)
+
+            if state_before is None or state_after is None:
+                # Modelo no disponible en tiempo de ejecución → fallback por deltas
+                logger.warning("[FEN-YOLO] detect_board_state devolvió None, usando fallback delta")
+                changed_delta = get_changed_cells(frame_a, frame_b)
+                squares_delta = [cell_index_to_square(idx) for idx in changed_delta]
+                move = detect_move_from_squares(
+                    board, squares_delta,
+                    frame_before=frame_a, frame_after=frame_b,
+                    changed_indices=changed_delta,
+                )
+            else:
+                # ── Inferencia de movimiento a partir de los dos estados ──────
+                move = infer_move_from_states(board, state_before, state_after)
+
+                # Si YOLO falla en este par, intentar con deltas como segunda oportunidad
+                if move is None:
+                    logger.debug("[FEN-YOLO] Inferencia YOLO sin resultado, reintentando con deltas")
+                    changed_delta = get_changed_cells(frame_a, frame_b)
+                    squares_delta = [cell_index_to_square(idx) for idx in changed_delta]
+                    move = detect_move_from_squares(
+                        board, squares_delta,
+                        frame_before=frame_a, frame_after=frame_b,
+                        changed_indices=changed_delta,
+                    )
+
+            if move:
+                san = board.san(move)
+                board.push(move)
+                fens.append(board.fen())
+                consecutive_failures = 0
+                logger.info("[FEN-YOLO] ✓ Movimiento detectado: %s (%s)", san, move.uci())
+            else:
+                fens.append(board.fen())
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_FAILURES:
+                    logger.warning(
+                        "[FEN-YOLO] %d fallos consecutivos — revisa media/debug/frame_pair_*.jpg",
+                        consecutive_failures,
+                    )
+                else:
+                    logger.debug("[FEN-YOLO] No se pudo determinar movimiento (fallo #%d)", consecutive_failures)
+
+                # Guardar debug del par problemático
+                _save_frame_pair_debug(i, frame_a, frame_b, [])
+
+        except Exception as exc:
+            logger.error("[FEN-YOLO] Error procesando frame %d: %s", i, exc)
+            fens.append(board.fen())
+            consecutive_failures += 1
+
+    return fens

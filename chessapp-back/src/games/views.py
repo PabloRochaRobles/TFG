@@ -1,61 +1,150 @@
 import json
-from http.client import responses
-
-from django.http import FileResponse
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.decorators import api_view
-from django.core.files.storage import FileSystemStorage
 import os
 import shutil
+import threading
 import uuid
 
-from .serializers import VideoUploadSerializer
-from django.conf import settings
-
 import chess
+from django.conf import settings
+from django.core.cache import cache
+from django.core.files.storage import FileSystemStorage
+from django.http import FileResponse
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .serializers import VideoUploadSerializer
 from .services import (
     extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames,
     auto_detect_board_corners, get_first_frame, get_initial_board_frame,
-    frames_to_fens, save_fens, load_fens, delete_fens,
+    frames_to_fens_yolo, save_fens, load_fens, delete_fens,
     save_corners_config, set_progress, get_progress,
     save_engine_analysis, load_engine_analysis, delete_engine_analysis,
-    analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess, consensus_analysis,
+    analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess,
+    consensus_analysis, analysis_engines_parallel,
     get_warped_frame_preview,
 )
 
 fs_video = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_videos'))
 fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_frames'))
 
+# Tiempo de vida de los resultados en caché (1 hora)
+CACHE_TTL = 3600
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tarea de análisis en segundo plano
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_analysis_background(task_id: str, file_name: str, video_path: str,
+                              corners_raw, analysis_id: str):
+    """
+    Hilo de fondo que ejecuta el pipeline completo de análisis de vídeo:
+      1. Detección de esquinas del tablero
+      2. Extracción de frames clave (detección de movimiento)
+      3. Generación de FENs con YOLOv8 (o fallback por deltas)
+
+    El progreso y el resultado se almacenan en Django Cache bajo la clave
+    'analysis_task_<task_id>' para que el WebSocket consumer los lea.
+
+    Escala de progreso:
+      0–50  → extracción de frames clave (extract_key_frames)
+      50–100 → generación de FENs (frames_to_fens_yolo)
+    """
+    import numpy as np
+
+    def _update(pct: int, **extra):
+        data = {'status': 'processing', 'progress': pct, **extra}
+        cache.set(f'analysis_task_{task_id}', data, timeout=CACHE_TTL)
+        set_progress(file_name, pct)  # Mantiene compatibilidad con endpoint de polling
+
+    try:
+        _update(0)
+
+        # 1. Leer primer frame
+        first_frame = get_first_frame(video_path)
+        if first_frame is None:
+            raise ValueError("No se pudo leer el vídeo.")
+
+        # 2. Esquinas: manual o auto-detección
+        if corners_raw and len(corners_raw) == 4:
+            h, w = first_frame.shape[:2]
+            corners = np.float32([[rx * w, ry * h] for rx, ry in corners_raw])
+        else:
+            corners = auto_detect_board_corners(first_frame)
+
+        # 3. Frame inicial de referencia
+        initial_frame = get_initial_board_frame(video_path, corners)
+
+        # 4. Extraer frames clave (progreso 0→50 gestionado dentro de extract_key_frames)
+        key_frames = extract_key_frames(video_path, corners, progress_key=file_name)
+
+        if isinstance(key_frames, dict) and key_frames.get('error'):
+            raise ValueError(f"Extracción de frames fallida: {key_frames['error']}")
+
+        if not key_frames:
+            raise ValueError("No se detectaron movimientos en el vídeo.")
+
+        # 5. Guardar frames clave
+        save_key_frames(key_frames, analysis_id)
+
+        # 6. Generar FENs con YOLOv8 (progreso 50→100)
+        all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
+        fens = frames_to_fens_yolo(all_frames, progress_key=file_name)
+
+        set_progress(file_name, 100)
+        save_fens(fens, analysis_id)
+
+        # 7. Almacenar resultado completo en caché
+        cache.set(f'analysis_task_{task_id}', {
+            'status':      'complete',
+            'progress':    100,
+            'message':     'Análisis completado con éxito.',
+            'analisis_id': analysis_id,
+            'total_frames': len(key_frames),
+            'total_fens':  len(fens),
+            'fens':        fens,
+        }, timeout=CACHE_TTL)
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        cache.set(f'analysis_task_{task_id}', {
+            'status': 'error',
+            'error':  str(exc),
+        }, timeout=CACHE_TTL)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vistas
+# ─────────────────────────────────────────────────────────────────────────────
+
 class VideoUploadView(APIView):
 
-    # POST: Recepción de un video desde el frontend, validación y almacenamiento en el backend
     @staticmethod
     def post(request):
+        MAX_FILE_SIZE = 250 * 1024 * 1024
 
-        MAX_FILE_SIZE = 250 * 1024 * 1024                                                 # Tamaño máximo de video: 250MB
+        serializer = VideoUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = VideoUploadSerializer(data=request.data)                               # Preparación de los datos para la validación
-        if not serializer.is_valid():                                                       # Si no son validos:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)              # Devuelve 400 BAD REQUEST
+        video_file = serializer.validated_data['video_file']
 
-        video_file = serializer.validated_data['video_file']                                # Se extrae el archivo ya limpio y seguro
-
-        if video_file.size > MAX_FILE_SIZE:                                                 # Si el tamaño del video es mayor de lo permitido
-            return Response({'error': 'El video insertado excede el tamaño permitido.'}, status=status.HTTP_400_BAD_REQUEST)    # Devuelve 400 BAD REQUEST
+        if video_file.size > MAX_FILE_SIZE:
+            return Response(
+                {'error': 'El vídeo insertado excede el tamaño permitido.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            # Creación de un nombre único.
-            file_extension = os.path.splitext(video_file.name)[1]                           # Extracción de la extensión del archivo
-            unique_file_name = str(uuid.uuid4()) + file_extension                           # Creación de un nombre con un identificador único
-            dest_dir = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
+            file_extension  = os.path.splitext(video_file.name)[1]
+            unique_file_name = str(uuid.uuid4()) + file_extension
+            dest_dir  = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
             os.makedirs(dest_dir, exist_ok=True)
             dest_path = os.path.join(dest_dir, unique_file_name)
 
-            # En Windows no se puede mover un fichero abierto ni cerrarlo sin que
-            # Django lo elimine. Usamos shutil.copy2() (solo lectura sobre el origen)
-            # y dejamos que Django limpie el temporal al finalizar la petición.
             if hasattr(video_file, 'temporary_file_path'):
                 shutil.copy2(video_file.temporary_file_path(), dest_path)
             else:
@@ -63,95 +152,116 @@ class VideoUploadView(APIView):
                     for chunk in video_file.chunks(chunk_size=8 * 1024 * 1024):
                         out.write(chunk)
 
-            saved_file_name = unique_file_name
-            partida_id = str(uuid.uuid4())                                                  # Generación de un ID único para la partida
+            partida_id = str(uuid.uuid4())
+            return Response(
+                {'file': unique_file_name, 'id': partida_id, 'message': 'Vídeo subido con éxito.'},
+                status=status.HTTP_201_CREATED,
+            )
 
-            return Response({'file': saved_file_name, 'id': partida_id, 'message': "Video subido con éxito."}, status=status.HTTP_201_CREATED)  # Se notifica del nombre del archivo, el ID de la partida, mensaje de que el video se ha subido y status 201 CREATED
+        except Exception as exc:
+            print(f"[UPLOAD] Error al guardar el vídeo: {exc}")
+            return Response(
+                {'error': 'Fallo del servidor durante el almacenamiento.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        except Exception as e:
-            print(f"[UPLOAD] Error al guardar el vídeo: {e}")
-            return Response({'error': "Fallo del servidor durante el almacenamiento."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AnalyzeVideoView(APIView):
+    """
+    POST: Inicia el análisis de un vídeo en un hilo de fondo y devuelve
+    inmediatamente un task_id para monitorizar el progreso vía WebSocket.
 
-    # POST: Análisis de un video de ajedrez con detección automática de tablero y generación de FENs
+    Respuesta:
+      { "task_id": "uuid", "analisis_id": "nombre_sin_extension",
+        "message": "Análisis iniciado." }
+
+    El cliente debe conectar al WebSocket:
+      ws://<servidor>/ws/progress/<task_id>/
+    para recibir actualizaciones de progreso y el resultado final.
+
+    Compatibilidad con caché: si los FENs ya existen y no se envían esquinas
+    nuevas, devuelve el resultado directamente (sin iniciar nuevo análisis).
+    """
+
     @staticmethod
     def post(request, *args, **kwargs):
-        file_name = request.data.get('video_file')                          # Extracción del nombre del fichero de la petición
+        file_name = request.data.get('video_file')
+        if not file_name:
+            return Response(
+                {'error': 'No se ha proporcionado el nombre del fichero.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if not file_name:                                                   # Si no se recibe el nombre del fichero
-            return Response({"error": "No se ha proporcionado el nombre del fichero."}, status=status.HTTP_400_BAD_REQUEST)
-
-        video_path = fs_video.path(file_name)                               # Extracción de la ruta hasta el video
-
-        if not os.path.exists(video_path):                                  # Si la ruta hasta el fichero no existe
-            return Response({"error": "No se ha encontrado el video."}, status=status.HTTP_400_BAD_REQUEST)
+        video_path = fs_video.path(file_name)
+        if not os.path.exists(video_path):
+            return Response(
+                {'error': 'No se ha encontrado el vídeo.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            video_name = os.path.splitext(file_name)[0]
+            video_name   = os.path.splitext(file_name)[0]
+            corners_raw  = request.data.get('corners')
 
-            # 0. Si los FENs ya están en caché y no se proporcionan esquinas nuevas → devolver directamente
-            corners_raw = request.data.get('corners')
+            # ── Caché: si ya existen FENs y no se piden esquinas nuevas ──────
             cached_fens = load_fens(video_name)
             if cached_fens and not corners_raw:
                 set_progress(file_name, 100)
-                print(f"[CACHE] FENs ya existentes para {video_name}, devolviendo sin reprocesar.")
                 return Response({
-                    "message": "Análisis cargado desde caché.",
-                    "total_frames": len(cached_fens) - 1,
-                    "analisis_id": video_name,
-                    "total_fens": len(cached_fens),
-                    "fens": cached_fens,
+                    'task_id':      None,
+                    'analisis_id':  video_name,
+                    'message':      'Análisis cargado desde caché.',
+                    'total_fens':   len(cached_fens),
+                    'fens':         cached_fens,
+                    'from_cache':   True,
                 }, status=status.HTTP_200_OK)
 
+            # ── Iniciar análisis en segundo plano ─────────────────────────────
+            task_id = str(uuid.uuid4())
             set_progress(file_name, 0)
+            cache.set(f'analysis_task_{task_id}', {'status': 'processing', 'progress': 0}, timeout=CACHE_TTL)
 
-            # 1. Leer el primer frame para la detección de esquinas
-            first_frame = get_first_frame(video_path)
-            if first_frame is None:
-                return Response({"error": "No se pudo leer el video."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # 2. Usar esquinas manuales si se proporcionan; si no, auto-detectar
-            corners_raw = request.data.get('corners')
-            if corners_raw and len(corners_raw) == 4:
-                import numpy as np
-                h, w = first_frame.shape[:2]
-                corners = np.float32([[rx * w, ry * h] for rx, ry in corners_raw])
-                print(f"[CORNERS] Usando calibración manual del frontend: {corners.tolist()}")
-            else:
-                corners = auto_detect_board_corners(first_frame)
-
-            # 3. Obtener el frame inicial transformado como referencia para la detección FEN
-            initial_frame = get_initial_board_frame(video_path, corners)
-
-            # 4. Extraer los frames clave del video (posiciones estables tras cada movimiento)
-            key_frames = extract_key_frames(video_path, corners, progress_key=file_name)  # Extracción de frames clave
-
-            if isinstance(key_frames, dict) and key_frames.get('error'):    # Comprobación de errores
-                return Response({"error": f"Fallo en la extracción de los frames clave: {key_frames['error']}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            if not key_frames:                                              # Si no se detectaron movimientos
-                return Response({"error": "No se detectaron movimientos en el video."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # 5. Guardar los frames clave
-            save_key_frames(key_frames, video_name)
-
-            # 6. Generar la secuencia de FENs comparando celdas entre frames consecutivos
-            all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
-            fens = frames_to_fens(all_frames, progress_key=file_name)       # Generación de FENs
-            set_progress(file_name, 100)
-            save_fens(fens, video_name)                                     # Persistencia en disco
+            thread = threading.Thread(
+                target=_run_analysis_background,
+                args=(task_id, file_name, video_path, corners_raw, video_name),
+                daemon=True,
+            )
+            thread.start()
 
             return Response({
-                "message": "Análisis completado con éxito.",
-                "total_frames": len(key_frames),
-                "analisis_id": video_name,
-                "total_fens": len(fens),
-                "fens": fens,
-            }, status=status.HTTP_200_OK)
+                'task_id':     task_id,
+                'analisis_id': video_name,
+                'message':     'Análisis iniciado. Conéctate al WebSocket para seguir el progreso.',
+            }, status=status.HTTP_202_ACCEPTED)
 
-        except Exception as e:                                              # Si salta la excepción
-            return Response({'error': f"Fallo interno en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            return Response(
+                {'error': f'Fallo interno al iniciar el análisis: {str(exc)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AnalysisResultView(APIView):
+    """
+    GET /api/partidas/result/<task_id>/
+
+    Devuelve el resultado del análisis una vez completado.
+    Útil como alternativa al WebSocket para clientes que no soporten WS.
+
+    Respuestas posibles:
+      { "status": "processing", "progress": 45 }
+      { "status": "complete",   "fens": [...], ... }
+      { "status": "error",      "error": "..." }
+      { "status": "not_found" }  → 404
+    """
+
+    @staticmethod
+    def get(request, task_id):
+        result = cache.get(f'analysis_task_{task_id}')
+        if result is None:
+            return Response({'status': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(result, status=status.HTTP_200_OK)
+
 
 class VideoListView(APIView):
 
@@ -164,41 +274,44 @@ class VideoListView(APIView):
             files = sorted(
                 [f for f in os.listdir(video_dir) if os.path.isfile(os.path.join(video_dir, f))],
                 key=lambda f: os.path.getmtime(os.path.join(video_dir, f)),
-                reverse=True
+                reverse=True,
             )
             return Response({'videos': files}, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class VideoStreamView(APIView):
 
     def get(self, request, file_name, *args, **kwargs):
-
         video_path = fs_video.path(file_name)
-
         if not os.path.exists(video_path):
-            return Response({"error: No se ha encontrado la ruta hasta el video"}, status=status.HTTP_404_NOT_FOUND)
-
+            return Response({'error': 'No se ha encontrado el vídeo.'}, status=status.HTTP_404_NOT_FOUND)
         if not os.path.isfile(video_path):
-            return Response({"error: No es un archivo valido"}, status=status.HTTP_404_NOT_FOUND)
-
+            return Response({'error': 'No es un archivo válido.'}, status=status.HTTP_404_NOT_FOUND)
         try:
-            # Leer el archivo completo en memoria y cerrarlo antes de enviar la respuesta
-            # Esto evita que el handle del archivo quede abierto durante el streaming (WinError 32 al borrar)
             with open(video_path, 'rb') as f:
                 content = f.read()
             from django.http import HttpResponse
             response = HttpResponse(content, content_type='video/mp4')
             response['Content-Length'] = len(content)
             return response
+        except Exception as exc:
+            return Response({'error': f'Fallo en el streaming: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        except Exception as e:
-            return Response({'error': f"Fallo en el procesamiento: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AnalysisChainView(APIView):
+    """
+    POST: Recibe una lista de FENs y devuelve, para cada uno, la cadena de
+    los N mejores movimientos por consenso.
 
-    # POST: Recibe una lista de FENs y devuelve, para cada uno, la cadena de los N mejores movimientos por consenso
+    Optimización respecto a la versión anterior:
+      - Los 3 motores se ejecutan EN PARALELO por cada paso (3× más rápido).
+      - Para una partida de 40 jugadas con depth=5:
+          Antes: 40 × 5 × 3 motores × 0.1s = ~60 s
+          Ahora: 40 × 5 × 0.1s (paralelo)  = ~20 s
+    """
+
     @staticmethod
     def post(request):
         fens  = request.data.get('fens', [])
@@ -207,17 +320,15 @@ class AnalysisChainView(APIView):
         if not fens:
             return Response({'error': 'No se han proporcionado posiciones FEN.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Acepta tanto una lista como una cadena con un único FEN
         if isinstance(fens, str):
             fens = [fens]
 
         results = []
 
         for fen in fens:
-            chain = []
+            chain       = []
             current_fen = fen.strip()
 
-            # Validar FEN
             try:
                 chess.Board(current_fen)
             except ValueError:
@@ -226,32 +337,29 @@ class AnalysisChainView(APIView):
 
             for step in range(1, depth + 1):
                 try:
-                    stock   = analysis_best_posStockfish(current_fen)
-                    obsidian = analysis_best_posObsidian(current_fen)
-                    plenty  = analysis_best_posPlentyChess(current_fen)
+                    # ── Tres motores en paralelo (ThreadPoolExecutor) ─────────
+                    stock, obsidian, plenty = analysis_engines_parallel(current_fen)
 
-                    agree = (stock['movement_uci'] == obsidian['movement_uci'] == plenty['movement_uci'])
-
+                    agree     = (stock['movement_uci'] == obsidian['movement_uci'] == plenty['movement_uci'])
                     consensus = consensus_analysis(stock, obsidian, plenty, current_fen)
 
                     chain.append({
-                        'step': step,
-                        'fen_before': current_fen,
-                        'consensus_san': consensus['movement_san'],
-                        'consensus_uci': consensus['movement_uci'],
-                        'fen_after': consensus['new_fen'],
+                        'step':           step,
+                        'fen_before':     current_fen,
+                        'consensus_san':  consensus['movement_san'],
+                        'consensus_uci':  consensus['movement_uci'],
+                        'fen_after':      consensus['new_fen'],
                         'full_agreement': agree,
                         'engines': {
-                            'stockfish':   {'san': stock['movement_san'],   'uci': stock['movement_uci'],   'score': stock['score']},
+                            'stockfish':   {'san': stock['movement_san'],    'uci': stock['movement_uci'],    'score': stock['score']},
                             'obsidian':    {'san': obsidian['movement_san'], 'uci': obsidian['movement_uci'], 'score': obsidian['score']},
-                            'plentychess': {'san': plenty['movement_san'],  'uci': plenty['movement_uci'],  'score': plenty['score']},
+                            'plentychess': {'san': plenty['movement_san'],   'uci': plenty['movement_uci'],   'score': plenty['score']},
                         },
                     })
-
                     current_fen = consensus['new_fen']
 
-                except Exception as e:
-                    chain.append({'step': step, 'error': str(e)})
+                except Exception as exc:
+                    chain.append({'step': step, 'error': str(exc)})
                     break
 
             results.append({'initial_fen': fen.strip(), 'chain': chain})
@@ -260,7 +368,7 @@ class AnalysisChainView(APIView):
 
 
 class VideoFirstFrameView(APIView):
-    """GET: Devuelve el primer frame del vídeo como imagen JPEG para la pantalla de calibración."""
+    """GET: Devuelve el primer frame del vídeo como JPEG para la pantalla de calibración."""
 
     @staticmethod
     def get(request, file_name):
@@ -269,7 +377,7 @@ class VideoFirstFrameView(APIView):
 
         video_path = fs_video.path(file_name)
         if not os.path.exists(video_path):
-            return Response({'error': 'Video no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Vídeo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         frame = get_first_frame(video_path)
         if frame is None:
@@ -292,7 +400,7 @@ class WarpedFramePreviewView(APIView):
 
         video_path = fs_video.path(file_name)
         if not os.path.exists(video_path):
-            return Response({'error': 'Video no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Vídeo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         corners_raw = request.data.get('corners')
         if not corners_raw or len(corners_raw) != 4:
@@ -310,7 +418,10 @@ class WarpedFramePreviewView(APIView):
 
 
 class AnalysisProgressView(APIView):
-    """GET: Devuelve el progreso actual del análisis de un vídeo (0-100)."""
+    """
+    GET: Devuelve el progreso actual del análisis (0–100).
+    Mantenido por compatibilidad con código que no use WebSocket.
+    """
 
     @staticmethod
     def get(request, file_name):
@@ -318,12 +429,7 @@ class AnalysisProgressView(APIView):
 
 
 class CalibrateCornersView(APIView):
-    """
-    POST: Guarda la calibración manual de las 4 esquinas del tablero.
-    Body: { corners: [[rx0,ry0],[rx1,ry1],[rx2,ry2],[rx3,ry3]] }
-    Coordenadas relativas [0-1] respecto al tamaño de imagen mostrado.
-    Orden: [TL=a1, TR=a8, BR=h8, BL=h1].
-    """
+    """POST: Guarda la calibración manual de las 4 esquinas del tablero."""
 
     @staticmethod
     def post(request):
@@ -334,24 +440,22 @@ class CalibrateCornersView(APIView):
         try:
             save_corners_config(corners)
             return Response({'message': 'Calibración guardada correctamente.'}, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class FensView(APIView):
 
-    # GET: Devuelve la secuencia de FENs de una partida ya analizada
     @staticmethod
     def get(request, analysis_id):
         fens = load_fens(analysis_id)
         if fens is None:
-            return Response({"error": "No se encontraron FENs para este análisis."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No se encontraron FENs para este análisis.'}, status=status.HTTP_404_NOT_FOUND)
         return Response({
-            "analisis_id": analysis_id,
-            "total_fens": len(fens),
-            "fens": fens,
+            'analisis_id': analysis_id,
+            'total_fens':  len(fens),
+            'fens':        fens,
         }, status=status.HTTP_200_OK)
-
 
 
 class EngineAnalysisView(APIView):
@@ -362,33 +466,31 @@ class EngineAnalysisView(APIView):
     def get(request, analysis_id):
         results = load_engine_analysis(analysis_id)
         if results is None:
-            return Response({"error": "No hay análisis de motores cacheado."}, status=status.HTTP_404_NOT_FOUND)
-        return Response({"analysis_id": analysis_id, "results": results}, status=status.HTTP_200_OK)
+            return Response({'error': 'No hay análisis de motores cacheado.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'analysis_id': analysis_id, 'results': results}, status=status.HTTP_200_OK)
 
     @staticmethod
     def post(request):
         analysis_id = request.data.get('analysis_id')
         results     = request.data.get('results')
         if not analysis_id or results is None:
-            return Response({"error": "Faltan analysis_id o results."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Faltan analysis_id o results.'}, status=status.HTTP_400_BAD_REQUEST)
         save_engine_analysis(analysis_id, results)
-        return Response({"message": "Análisis guardado."}, status=status.HTTP_200_OK)
+        return Response({'message': 'Análisis guardado.'}, status=status.HTTP_200_OK)
 
 
-# DELETE: Petición de borrado de un video desde el frontend y de su conjunto de frames clave si fuera necesario
 @api_view(['DELETE'])
 def delete_video_and_frames(request, file_name):
-    if not file_name:                                                                                                    # Si no existe ese video:
-        return Response({"error": "No se ha proporcionado el nombre del video."}, status=status.HTTP_400_BAD_REQUEST)   # Devuelve error y status 400 BAD REQUEST
+    if not file_name:
+        return Response({'error': 'No se ha proporcionado el nombre del vídeo.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    ok = delete_temporary_videos(file_name)                                                                             # Ejecuta la función de borrado de video
-
-    if not ok:                                                                                                          # Si el borrado falló:
-        return Response({"error": "No se encontró el video o no se pudo eliminar."}, status=status.HTTP_404_NOT_FOUND)  # Devuelve 404
+    ok = delete_temporary_videos(file_name)
+    if not ok:
+        return Response({'error': 'No se encontró el vídeo o no se pudo eliminar.'}, status=status.HTTP_404_NOT_FOUND)
 
     analysis_id = os.path.splitext(file_name)[0]
-    delete_key_frames(analysis_id)        # Frames clave asociados (si existen)
-    delete_fens(analysis_id)              # FENs asociados (si existen)
-    delete_engine_analysis(analysis_id)   # Análisis de motores cacheado (si existe)
+    delete_key_frames(analysis_id)
+    delete_fens(analysis_id)
+    delete_engine_analysis(analysis_id)
 
-    return Response({"message": "Proceso de eliminación completado."}, status=status.HTTP_200_OK)                       # Se notifica de que el proceso ha terminado y se devuelve status 200
+    return Response({'message': 'Proceso de eliminación completado.'}, status=status.HTTP_200_OK)

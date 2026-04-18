@@ -1,0 +1,25 @@
+# ── Dependencias para entrenamiento del modelo YOLOv8 ─────────────────────────
+# Instalar UNA SOLA VEZ en el entorno de desarrollo (no necesario en producción).
+#
+# Instalación estándar (CPU):
+#   pip install -r requirements-training.txt
+#
+# Con GPU CUDA 11.8:
+#   pip install -r requirements-training.txt
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# Con GPU CUDA 12.1:
+#   pip install -r requirements-training.txt
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Descarga y gestión de datasets desde Roboflow Universe
+roboflow>=1.1.0
+
+# Framework YOLOv8 — incluye torch automáticamente en la versión CPU
+ultralytics>=8.0.0
+
+# PyYAML para leer/escribir data.yaml del dataset
+pyyaml>=6.0
+
+# Matplotlib para visualizar métricas de entrenamiento (opcional pero útil)
+matplotlib>=3.7.0

@@ -3,21 +3,29 @@ from .views import (
     VideoUploadView, delete_video_and_frames, AnalyzeVideoView, VideoStreamView,
     VideoListView, AnalysisChainView, FensView,
     VideoFirstFrameView, CalibrateCornersView, AnalysisProgressView,
-    EngineAnalysisView, WarpedFramePreviewView,
+    EngineAnalysisView, WarpedFramePreviewView, AnalysisResultView,
 )
 
 urlpatterns = [
-    path('upload/', VideoUploadView.as_view(), name='video_upload'),
-    path('delete/<str:file_name>/', delete_video_and_frames, name='video_delete'),
-    path('analyze/', AnalyzeVideoView.as_view(), name='video_analyze'),
-    path('progress/<str:file_name>/', AnalysisProgressView.as_view(), name='analysis_progress'),
-    path('stream/<str:file_name>/', VideoStreamView.as_view(), name='video_stream'),
-    path('list/', VideoListView.as_view(), name='video_list'),
-    path('analysis-chain/', AnalysisChainView.as_view(), name='analysis_chain'),
-    path('fens/<str:analysis_id>/', FensView.as_view(), name='fens_get'),
-    path('first-frame/<str:file_name>/', VideoFirstFrameView.as_view(), name='first_frame'),
-    path('calibrate/', CalibrateCornersView.as_view(), name='calibrate_corners'),
-    path('engine-analysis/', EngineAnalysisView.as_view(), name='engine_analysis_save'),
-    path('engine-analysis/<str:analysis_id>/', EngineAnalysisView.as_view(), name='engine_analysis_get'),
-    path('warped-preview/<str:file_name>/', WarpedFramePreviewView.as_view(), name='warped_preview'),
+    path('upload/',                                  VideoUploadView.as_view(),        name='video_upload'),
+    path('delete/<str:file_name>/',                  delete_video_and_frames,          name='video_delete'),
+
+    # Análisis: inicia en segundo plano y devuelve task_id inmediatamente (HTTP 202)
+    path('analyze/',                                 AnalyzeVideoView.as_view(),       name='video_analyze'),
+
+    # Resultado del análisis (alternativa al WebSocket para clientes que no lo soporten)
+    path('result/<str:task_id>/',                    AnalysisResultView.as_view(),     name='analysis_result'),
+
+    # Progreso HTTP (mantenido por compatibilidad con código antiguo)
+    path('progress/<str:file_name>/',                AnalysisProgressView.as_view(),   name='analysis_progress'),
+
+    path('stream/<str:file_name>/',                  VideoStreamView.as_view(),        name='video_stream'),
+    path('list/',                                    VideoListView.as_view(),          name='video_list'),
+    path('analysis-chain/',                          AnalysisChainView.as_view(),      name='analysis_chain'),
+    path('fens/<str:analysis_id>/',                  FensView.as_view(),               name='fens_get'),
+    path('first-frame/<str:file_name>/',             VideoFirstFrameView.as_view(),    name='first_frame'),
+    path('calibrate/',                               CalibrateCornersView.as_view(),   name='calibrate_corners'),
+    path('engine-analysis/',                         EngineAnalysisView.as_view(),     name='engine_analysis_save'),
+    path('engine-analysis/<str:analysis_id>/',       EngineAnalysisView.as_view(),     name='engine_analysis_get'),
+    path('warped-preview/<str:file_name>/',          WarpedFramePreviewView.as_view(), name='warped_preview'),
 ]
