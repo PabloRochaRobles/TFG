@@ -211,7 +211,10 @@ export default function UploadScreen() {
 
   const navigation = useNavigation();
   const router = useRouter();
-  const { cameraUri } = useLocalSearchParams<{ cameraUri?: string }>();
+  const { cameraUri, preloaded } = useLocalSearchParams<{ cameraUri?: string; preloaded?: string }>();
+
+  // Ref para saber si la pantalla se abrió desde la librería con un vídeo ya subido
+  const preloadedRef = useRef<string | null>(null);
 
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
@@ -227,6 +230,25 @@ export default function UploadScreen() {
       setPhase('idle');
     }
   }, [cameraUri]);
+
+  // Cuando se llega desde la librería con un vídeo ya subido, saltar directo a calibración
+  useEffect(() => {
+    if (preloaded) {
+      preloadedRef.current = preloaded;
+      setSavedFileName(preloaded);
+      setVideoUri(null);
+      setVideoFileName(null);
+      setCorners([]);
+      scale.value = 1; tx.value = 0; ty.value = 0;
+      savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+      setZoomLevel(1);
+      adjScale.value = 1; adjTx.value = 0; adjTy.value = 0;
+      adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
+      setPhase('calibrating');
+    } else {
+      preloadedRef.current = null;
+    }
+  }, [preloaded]);
 
   useEffect(() => {
     if (videoUri) {
@@ -291,6 +313,13 @@ export default function UploadScreen() {
     setZoomLevel(1);
     adjScale.value = 1; adjTx.value = 0; adjTy.value = 0;
     adjSavedScale.value = 1; adjSavedTx.value = 0; adjSavedTy.value = 0;
+  };
+
+  // En flujo preloaded (desde librería): resetear y volver atrás
+  const handleDiscardPreloaded = () => {
+    preloadedRef.current = null;
+    handleReset();
+    router.back();
   };
 
   // ── Calibración ────────────────────────────────────────────────────────────
@@ -604,12 +633,16 @@ export default function UploadScreen() {
               )}
 
               <TouchableOpacity
-                style={[styles.discardButton, { borderColor: '#ef4444' }]}
-                onPress={handleReset}
+                style={[styles.discardButton, { borderColor: preloadedRef.current ? colors.border : '#ef4444' }]}
+                onPress={preloadedRef.current ? handleDiscardPreloaded : handleReset}
               >
-                <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                <Text style={[styles.discardButtonText, { color: '#ef4444' }]}>
-                  {t.upload.discard}
+                <Ionicons
+                  name={preloadedRef.current ? 'arrow-back' : 'trash-outline'}
+                  size={16}
+                  color={preloadedRef.current ? colors.text : '#ef4444'}
+                />
+                <Text style={[styles.discardButtonText, { color: preloadedRef.current ? colors.text : '#ef4444' }]}>
+                  {preloadedRef.current ? 'Volver' : t.upload.discard}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -719,12 +752,16 @@ export default function UploadScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.discardButton, { borderColor: '#ef4444' }]}
-                onPress={handleReset}
+                style={[styles.discardButton, { borderColor: preloadedRef.current ? colors.border : '#ef4444' }]}
+                onPress={preloadedRef.current ? handleDiscardPreloaded : handleReset}
               >
-                <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                <Text style={[styles.discardButtonText, { color: '#ef4444' }]}>
-                  {t.upload.discard}
+                <Ionicons
+                  name={preloadedRef.current ? 'arrow-back' : 'trash-outline'}
+                  size={16}
+                  color={preloadedRef.current ? colors.text : '#ef4444'}
+                />
+                <Text style={[styles.discardButtonText, { color: preloadedRef.current ? colors.text : '#ef4444' }]}>
+                  {preloadedRef.current ? 'Volver' : t.upload.discard}
                 </Text>
               </TouchableOpacity>
             </View>

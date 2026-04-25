@@ -1,9 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
-import { useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,13 +24,15 @@ import { useTheme } from '../../contexts/ThemeContext';
 // ── Tarjeta individual de vídeo ──────────────────────────────────────────────
 type VideoCardProps = {
   fileName: string;
+  isAnalyzed: boolean;
   onDelete: () => void;
   onAnalyze: () => void;
 };
 
-function VideoCard({ fileName, onDelete, onAnalyze }: VideoCardProps) {
+function VideoCard({ fileName, isAnalyzed, onDelete, onAnalyze }: VideoCardProps) {
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
+  const t = useTranslation();
 
   const player = useVideoPlayer(
     {
@@ -47,21 +50,27 @@ function VideoCard({ fileName, onDelete, onAnalyze }: VideoCardProps) {
         allowsFullscreen
         allowsPictureInPicture={false}
       />
-      <Text
-        style={[styles.cardName, { color: colors.textSecondary }]}
-        numberOfLines={1}
-      >
-        {fileName}
-      </Text>
       <View style={styles.cardActions}>
         <TouchableOpacity
-          style={[styles.actionBtn, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}
+          style={[
+            styles.analyzeBtn,
+            isAnalyzed
+              ? { backgroundColor: colors.primaryLight, borderColor: colors.primary }
+              : { backgroundColor: isDarkMode ? '#2d1f0e' : '#fff7ed', borderColor: '#f97316' },
+          ]}
           onPress={onAnalyze}
         >
-          <Ionicons name="search" size={22} color={colors.primary} />
+          <Ionicons
+            name={isAnalyzed ? 'bar-chart-outline' : 'play-circle-outline'}
+            size={18}
+            color={isAnalyzed ? colors.primary : '#f97316'}
+          />
+          <Text style={[styles.analyzeBtnText, { color: isAnalyzed ? colors.primary : '#f97316' }]}>
+            {isAnalyzed ? t.library.viewAnalysis : t.library.performAnalysis}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.actionBtn, { backgroundColor: isDarkMode ? '#3f1f1f' : '#fee2e2', borderColor: '#ef4444' }]}
+          style={[styles.deleteBtn, { backgroundColor: isDarkMode ? '#3f1f1f' : '#fee2e2', borderColor: '#ef4444' }]}
           onPress={onDelete}
         >
           <Ionicons name="trash-outline" size={22} color="#ef4444" />
@@ -79,16 +88,21 @@ export default function LibraryScreen() {
   const { isDarkMode } = useTheme();
   const t = useTranslation();
 
-  const [videos, setVideos] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [videos, setVideos]                   = useState<string[]>([]);
+  const [analyzedVideos, setAnalyzedVideos]   = useState<Record<string, string>>({});
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState<string | null>(null);
 
   const fetchVideos = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await listVideos();
+      const [list, raw] = await Promise.all([
+        listVideos(),
+        AsyncStorage.getItem('analyzedVideos'),
+      ]);
       setVideos(list);
+      setAnalyzedVideos(raw ? JSON.parse(raw) as Record<string, string> : {});
     } catch {
       setError('loadError');
     } finally {
@@ -96,9 +110,12 @@ export default function LibraryScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchVideos();
-  }, [fetchVideos]);
+  // Refrescar cada vez que la pantalla se enfoca (ej: al volver del análisis)
+  useFocusEffect(
+    useCallback(() => {
+      fetchVideos();
+    }, [fetchVideos]),
+  );
 
   const handleDelete = (fileName: string) => {
     Alert.alert(
@@ -113,6 +130,13 @@ export default function LibraryScreen() {
             try {
               await deleteVideo(fileName);
               setVideos((prev) => prev.filter((v) => v !== fileName));
+              // También eliminar del mapa de analizados
+              setAnalyzedVideos((prev) => {
+                const next = { ...prev };
+                delete next[fileName];
+                AsyncStorage.setItem('analyzedVideos', JSON.stringify(next)).catch(() => {});
+                return next;
+              });
             } catch {
               Alert.alert(t.library.error, t.library.deleteError);
             }
@@ -122,8 +146,14 @@ export default function LibraryScreen() {
     );
   };
 
-  const handleAnalyze = (fileName: string) => {
-    router.push({ pathname: '/(drawer)/analysis', params: { file: fileName } });
+  const handleAnalyze = (fileName: string, isAnalyzed: boolean) => {
+    if (isAnalyzed) {
+      // Ir directo al análisis (cargará desde caché)
+      router.push({ pathname: '/(drawer)/analysis', params: { file: fileName } });
+    } else {
+      // Ir a calibración obligatoria antes de analizar
+      router.push({ pathname: '/(drawer)/(tabs)/upload', params: { preloaded: fileName } });
+    }
   };
 
   return (
@@ -184,8 +214,9 @@ export default function LibraryScreen() {
                 renderItem={({ item }) => (
                   <VideoCard
                     fileName={item}
+                    isAnalyzed={item in analyzedVideos}
                     onDelete={() => handleDelete(item)}
-                    onAnalyze={() => handleAnalyze(item)}
+                    onAnalyze={() => handleAnalyze(item, item in analyzedVideos)}
                   />
                 )}
                 contentContainerStyle={styles.list}
@@ -260,22 +291,30 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 16 / 9,
   },
-  cardName: {
-    fontSize: 12,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
   cardActions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 10,
     padding: 12,
   },
-  actionBtn: {
+  analyzeBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  analyzeBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  deleteBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: 10,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',

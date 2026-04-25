@@ -78,10 +78,12 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
         initial_frame = get_initial_board_frame(video_path, corners)
 
         # 4. Extraer frames clave (progreso 0→50 gestionado dentro de extract_key_frames)
-        key_frames = extract_key_frames(video_path, corners, progress_key=file_name)
+        result = extract_key_frames(video_path, corners, progress_key=file_name)
 
-        if isinstance(key_frames, dict) and key_frames.get('error'):
-            raise ValueError(f"Extracción de frames fallida: {key_frames['error']}")
+        if isinstance(result, dict) and result.get('error'):
+            raise ValueError(f"Extracción de frames fallida: {result['error']}")
+
+        key_frames, key_frames_orig, mat = result
 
         if not key_frames:
             raise ValueError("No se detectaron movimientos en el vídeo.")
@@ -91,6 +93,8 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
 
         # 6. Generar FENs con YOLOv8 (progreso 50→100) con streaming parcial
         all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
+        # Frames originales (sin warpear) para mejorar la detección YOLO
+        all_original_frames = ([None] + key_frames_orig) if key_frames_orig else None
 
         fens_stream_key = f'analysis_task_{task_id}_fens'
         streaming_fens = [chess.STARTING_FEN]
@@ -104,7 +108,13 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
                 last_streamed = fen
                 cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
 
-        fens = frames_to_fens_yolo(all_frames, progress_key=file_name, on_fen=_on_fen)
+        fens = frames_to_fens_yolo(
+            all_frames,
+            progress_key=file_name,
+            on_fen=_on_fen,
+            original_frames=all_original_frames,
+            M=mat,
+        )
 
         # Eliminar FENs duplicados consecutivos (frames donde no se detectó movimiento)
         fens_uniq = [fens[0]] if fens else []

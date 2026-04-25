@@ -135,6 +135,9 @@ CELL_SIZE: float = NORMALIZED_SIZE / 8
 _model = None
 _model_load_attempted = False
 
+# Contador secuencial para imágenes de debug YOLO (se reinicia al inicio de cada análisis)
+_yolo_debug_counter = 0
+
 
 def get_model():
     """
@@ -306,82 +309,177 @@ def invalidate_grid_cache() -> None:
 BoardState = dict[int, str]  # {chess.Square: símbolo_FEN}
 
 
-def detect_board_state(warped_image: np.ndarray) -> Optional[BoardState]:
+def validate_board_state(raw: dict[int, tuple[str, float]]) -> BoardState:
     """
-    Ejecuta YOLOv8 sobre la imagen warpeada del tablero (1000×1000 BGR) y
-    devuelve un diccionario {chess.Square → símbolo_pieza_FEN}.
+    Filtra el estado bruto detectado por YOLO para garantizar que sea
+    ajedrecísticamente válido:
+      - Máximo 1 rey por bando (se conserva el de mayor confianza).
+      - Máximo 8 peones por bando (se conservan los de mayor confianza).
+      - Máximo 9 damas/torres/alfiles/caballos (con coronaciones).
+    Cuando hay más piezas de las permitidas, se descartan las de menor confianza.
+    """
+    MAX_COUNTS: dict[str, int] = {
+        'K': 1,  'k': 1,   # Reyes: exactamente 1 por bando
+        'P': 8,  'p': 8,   # Peones: máximo 8 por bando
+        'Q': 9,  'q': 9,   # Damas: 1 original + hasta 8 coronaciones
+        'R': 10, 'r': 10,
+        'B': 10, 'b': 10,
+        'N': 10, 'n': 10,
+    }
+    by_piece: dict[str, list[tuple[int, float]]] = {}
+    for sq, (sym, conf) in raw.items():
+        by_piece.setdefault(sym, []).append((sq, conf))
 
-    Mapeo de coordenadas (orientación estándar de grabación lateral):
-      Eje X (izquierda→derecha): rank 1 → rank 8   (col = rank_index)
-      Eje Y (arriba→abajo):      file a → file h    (row = file_index)
+    result: BoardState = {}
+    for sym, detections in by_piece.items():
+        limit = MAX_COUNTS.get(sym, 10)
+        detections.sort(key=lambda x: x[1], reverse=True)
+        for sq, _ in detections[:limit]:
+            result[sq] = sym
+    return result
 
-    Coherente con cell_index_to_square en services.py:
-      chess.square(file=row, rank=col)
 
-    Devuelve None si el modelo no está disponible (se usará fallback por deltas).
+def detect_board_state(
+    warped_image: np.ndarray,
+    original_frame: Optional[np.ndarray] = None,
+    M: Optional[np.ndarray] = None,
+) -> Optional[BoardState]:
+    """
+    Ejecuta YOLOv8 y devuelve {chess.Square → símbolo_pieza_FEN}.
+
+    Cuando se proporcionan `original_frame` y `M`:
+      - YOLO corre sobre el frame original sin deformar (más fiel al dataset
+        de entrenamiento: las piezas altas no sufren distorsión por warp).
+      - El punto base de cada bbox (centro inferior, donde la pieza toca el
+        tablero físico) se transforma al espacio 1000×1000 mediante M.
+      - La cuadrícula Hough sigue usando el frame warpeado para determinar
+        los bordes de las 64 casillas.
+
+    Sin `original_frame`/`M`: comportamiento previo (YOLO sobre warped).
+
+    Devuelve None si el modelo no está disponible (fallback por deltas).
     """
     model = get_model()
     if model is None:
         return None
 
-    # Detectar cuadrícula real con Hough (o cuadrícula uniforme si falla)
+    # Cuadrícula Hough siempre sobre la imagen warpeada (espacio normalizado)
     col_bounds, row_bounds = _grid_for_frame(warped_image)
 
-    # Redimensionar a INFERENCE_SIZE para mayor velocidad
-    img_small = cv2.resize(warped_image, (INFERENCE_SIZE, INFERENCE_SIZE))
-    scale_factor = NORMALIZED_SIZE / INFERENCE_SIZE  # Para volver a coordenadas originales
+    # ── Selección de imagen para YOLO ────────────────────────────────────────
+    use_original = original_frame is not None and M is not None
+
+    if use_original:
+        orig_h, orig_w = original_frame.shape[:2]
+        img_small = cv2.resize(original_frame, (INFERENCE_SIZE, INFERENCE_SIZE))
+        sx = orig_w / INFERENCE_SIZE   # Factor de escala X para volver a píxeles originales
+        sy = orig_h / INFERENCE_SIZE
+    else:
+        img_small    = cv2.resize(warped_image, (INFERENCE_SIZE, INFERENCE_SIZE))
+        scale_factor = NORMALIZED_SIZE / INFERENCE_SIZE
 
     results = model(img_small, verbose=False, conf=CONFIDENCE_THRESHOLD)[0]
 
-    # {square: (símbolo, confianza)}  — guardamos la confianza para resolver conflictos
+    # {square: (símbolo, confianza)} — guardamos confianza para resolver conflictos
     raw: dict[int, tuple[str, float]] = {}
 
     for box in results.boxes:
         cls_id   = int(box.cls[0])
         cls_name = model.names[cls_id]
 
-        # Centro del bounding box en coordenadas del tablero original (0–1000)
         x1, y1, x2, y2 = box.xyxy[0].tolist()
-        x_center = ((x1 + x2) / 2) * scale_factor
-        y_center = ((y1 + y2) / 2) * scale_factor
 
-        # Intentar mapeo directo con color incluido
+        if use_original:
+            # Punto base: centro inferior del bbox = donde la pieza apoya en el tablero
+            base_x = ((x1 + x2) / 2) * sx
+            base_y = y2 * sy
+            # Proyectar al espacio warpeado (0–NORMALIZED_SIZE) con la homografía M
+            pt = np.array([[[base_x, base_y]]], dtype=np.float32)
+            warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
+            
+            # IGNORAR piezas que caen fuera del tablero físico (ej. tablero digital en el vídeo)
+            # Margen de 50px por si la base asoma ligeramente del borde de la casilla
+            if warped_pt[0] < -50 or warped_pt[0] > NORMALIZED_SIZE + 50 or \
+               warped_pt[1] < -50 or warped_pt[1] > NORMALIZED_SIZE + 50:
+                continue
+
+            x_center = float(np.clip(warped_pt[0], 0, NORMALIZED_SIZE))
+            y_center = float(np.clip(warped_pt[1], 0, NORMALIZED_SIZE))
+        else:
+            x_center = ((x1 + x2) / 2) * scale_factor
+            y_center = ((y1 + y2) / 2) * scale_factor
+
+        # Mapeo de clase → símbolo FEN
         piece = CLASS_MAP.get(cls_name)
-
-        # Si no hay mapeo directo, intentar color-neutral por posición:
-        # mitad superior (y < 500) → negras, mitad inferior (y >= 500) → blancas
         if not piece:
             neutral = _COLOR_NEUTRAL_MAP.get(cls_name)
             if neutral:
                 white_sym, black_sym = neutral
+                # Mitad superior → negras, mitad inferior → blancas (en espacio warpeado)
                 piece = white_sym if y_center >= (NORMALIZED_SIZE / 2) else black_sym
-
         if not piece:
             continue
 
-        # Mapear el centro del bbox a la celda usando los bordes detectados por Hough
-        col = min(bisect.bisect_right(col_bounds, x_center) - 1, 7)
-        row = min(bisect.bisect_right(row_bounds, y_center) - 1, 7)
-        col = max(0, col)
-        row = max(0, row)
-
-        square = chess.square(row, col)   # chess.square(file, rank)
+        # Mapear coordenada warpeada a casilla usando bordes Hough
+        col = max(0, min(bisect.bisect_right(col_bounds, x_center) - 1, 7))
+        row = max(0, min(bisect.bisect_right(row_bounds, y_center) - 1, 7))
+        square = chess.square(row, col)
         conf   = float(box.conf[0])
 
-        # Si hay conflicto en la misma casilla, conservar la detección más segura
         if square in raw:
             if conf > raw[square][1]:
                 raw[square] = (piece, conf)
         else:
             raw[square] = (piece, conf)
 
-    board_state: BoardState = {sq: sym for sq, (sym, _) in raw.items()}
+    board_state = validate_board_state(raw)
 
     logger.debug(
-        "[YOLO] %d piezas detectadas: %s",
+        "[YOLO] %d piezas detectadas (%s): %s",
         len(board_state),
+        "original+M" if use_original else "warped",
         {chess.square_name(sq): sym for sq, sym in board_state.items()},
     )
+
+    # ── Debug visual: bbox + casilla + confianza sobre el frame usado por YOLO ─
+    try:
+        debug_img = img_small.copy()
+        for box in results.boxes:
+            cls_id   = int(box.cls[0])
+            cls_name = model.names[cls_id]
+            conf     = float(box.conf[0])
+            x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
+            if use_original:
+                bx = ((x1 + x2) / 2) * sx
+                by = y2 * sy
+                pt = np.array([[[bx, by]]], dtype=np.float32)
+                wpt = cv2.perspectiveTransform(pt, M)[0][0]
+                
+                # Ignorar también en la visualización de debug
+                if wpt[0] < -50 or wpt[0] > NORMALIZED_SIZE + 50 or \
+                   wpt[1] < -50 or wpt[1] > NORMALIZED_SIZE + 50:
+                    continue
+
+                wx = float(np.clip(wpt[0], 0, NORMALIZED_SIZE))
+                wy = float(np.clip(wpt[1], 0, NORMALIZED_SIZE))
+                col_d = max(0, min(bisect.bisect_right(col_bounds, wx) - 1, 7))
+                row_d = max(0, min(bisect.bisect_right(row_bounds, wy) - 1, 7))
+            else:
+                col_d = max(0, min(bisect.bisect_right(col_bounds, ((x1+x2)/2)*scale_factor) - 1, 7))
+                row_d = max(0, min(bisect.bisect_right(row_bounds, ((y1+y2)/2)*scale_factor) - 1, 7))
+            sq_name = chess.square_name(chess.square(row_d, col_d))
+            piece_d = CLASS_MAP.get(cls_name) or cls_name
+            color   = (0, 200, 0) if conf >= CONFIDENCE_THRESHOLD else (0, 0, 200)
+            cv2.rectangle(debug_img, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(debug_img, f"{piece_d}@{sq_name} {conf:.2f}",
+                        (x1, max(y1 - 4, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        from .services import save_debug_image
+        global _yolo_debug_counter
+        save_debug_image(f"yolo_detect_{_yolo_debug_counter:04d}", debug_img)
+        _yolo_debug_counter += 1
+    except Exception:
+        pass
+
     return board_state
 
 

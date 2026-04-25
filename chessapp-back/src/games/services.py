@@ -22,6 +22,13 @@ from rest_framework import status
 
 logger = logging.getLogger(__name__)
 
+try:
+    import mediapipe as _mp
+    _MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    _mp = None
+    _MEDIAPIPE_AVAILABLE = False
+
 TEMP_VIDEOS_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_videos')
 TEMP_FRAMES_LOCATION     = os.path.join(settings.MEDIA_ROOT, 'temp_frames')
 ENGINES_DIR              = os.path.join(settings.BASE_DIR, 'misc', 'engines')
@@ -178,6 +185,36 @@ def process_image(frame):
     blur = cv2.GaussianBlur(gray, ksize=(21, 21), sigmaX=0)     # Se le aplica un filtro Gaussiano a la imagen en escala de grises
     return blur                                                 # Devuelve el frame con estos filtros aplicados
 
+_mp_hands_instance = None
+
+_hand_in_frame_logged = False
+
+def _hand_in_frame(frame) -> bool:
+    """Devuelve True si MediaPipe detecta una mano en el frame (BGR). Fallback: False."""
+    global _mp_hands_instance, _hand_in_frame_logged
+    if not _MEDIAPIPE_AVAILABLE:
+        if not _hand_in_frame_logged:
+            print("[HANDS] MediaPipe no disponible — filtro de manos desactivado")
+            _hand_in_frame_logged = True
+        return False
+    try:
+        if _mp_hands_instance is None:
+            _mp_hands_instance = _mp.solutions.hands.Hands(
+                static_image_mode=True,
+                max_num_hands=1,
+                min_detection_confidence=0.6,
+            )
+            print("[HANDS] MediaPipe Hands inicializado correctamente")
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = _mp_hands_instance.process(rgb)
+        detected = bool(result.multi_hand_landmarks)
+        if detected:
+            print(f"[HANDS] Mano detectada — esperando retirada")
+        return detected
+    except Exception as e:
+        logger.debug("[HANDS] Error en detección de manos: %s", e)
+        return False
+
 # Función que transforma el cómo se ve el tablero tras aplicarle el cambio de perspectiva arreglando que la imagen no se distorsione
 def get_matriz(coords):
     # coords llega en orden [a1, a8, h8, h1] tal como los toca el usuario en la calibración.
@@ -249,7 +286,8 @@ def delete_key_frames(file_name):
 def extract_key_frames(video_path, coords, progress_key=None):
 
     # Variables de la función
-    key_frames = []                 # Lista de los frames claves
+    key_frames = []                 # Lista de los frames claves (warpeados)
+    key_frames_orig = []            # Lista de los frames claves (originales sin warpear)
     frames_since_motion = 0         # Frames consecutivos de estabilidad desde el último movimiento
     motion_detected = False         # Indica si actualmente se está detectando un movimiento
 
@@ -332,20 +370,26 @@ def extract_key_frames(video_path, coords, progress_key=None):
                 ref_area = int(np.sum(ref_thresh > 0))
 
                 if ref_area > min_change_from_ref:
-                    key_frames.append(frame_curr_warped.copy())             # Guardar frame clave
-                    blur_ref = blur_curr.copy()                             # Nueva referencia = posición actual
-                    cooldown_remaining = cooldown_frames                    # Iniciar cooldown
-                    print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area}) → cooldown {cooldown_frames} frames")
+                    if _hand_in_frame(frame_curr):
+                        frames_since_motion = 0
+                        print(f"[FRAMES] Mano detectada en frame {frame_count}, esperando retirada")
+                    else:
+                        key_frames.append(frame_curr_warped.copy())
+                        key_frames_orig.append(frame_curr.copy())
+                        blur_ref = blur_curr.copy()
+                        cooldown_remaining = cooldown_frames
+                        motion_detected = False
+                        frames_since_motion = 0
+                        print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area}) → cooldown {cooldown_frames} frames")
                 else:
                     print(f"[FRAMES] Movimiento ignorado como falsa alarma (ref_area={ref_area})")
-
-                motion_detected     = False
-                frames_since_motion = 0
+                    motion_detected     = False
+                    frames_since_motion = 0
 
         blur_prev = blur_curr
 
     video.release()
-    return key_frames
+    return key_frames, key_frames_orig, mat
 
 # -----------------------------------------
 # Utilidad de debug: guardado de imágenes de diagnóstico
@@ -1332,7 +1376,7 @@ def consensus_analysis(stock, obsidian, plenty, fen):
 # Generación de FENs con YOLOv8 (detección de estado absoluto)
 # -----------------------------------------
 
-def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=None):
+def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=None, original_frames=None, M=None):
     """
     Versión YOLOv8 de frames_to_fens.
 
@@ -1358,8 +1402,19 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
         logger.info("[FEN-YOLO] Modelo YOLO no disponible — usando detección por deltas")
         return frames_to_fens(all_frames, initial_fen, progress_key)
 
-    # Limpiar cuadrícula cacheada de análisis anteriores
+    # Limpiar cuadrícula cacheada y contador de debug de análisis anteriores
     invalidate_grid_cache()
+    from . import chess_detector as _cd
+    _cd._yolo_debug_counter = 0
+
+    # Limpiar imágenes de debug de ejecuciones anteriores
+    if os.path.isdir(DEBUG_LOCATION):
+        for f in os.listdir(DEBUG_LOCATION):
+            if f.startswith("frame_pair_") and f.endswith(".jpg"):
+                try:
+                    os.remove(os.path.join(DEBUG_LOCATION, f))
+                except Exception:
+                    pass
 
     logger.info("[FEN-YOLO] Usando YOLOv8 para detección de estado absoluto")
 
@@ -1382,8 +1437,10 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
 
         try:
             # ── Detección YOLO de estado absoluto en ambos frames ─────────────
-            state_before = detect_board_state(frame_a)
-            state_after  = detect_board_state(frame_b)
+            orig_a = original_frames[i]     if original_frames else None
+            orig_b = original_frames[i + 1] if original_frames else None
+            state_before = detect_board_state(frame_a, original_frame=orig_a, M=M)
+            state_after  = detect_board_state(frame_b, original_frame=orig_b, M=M)
 
             if state_before is None or state_after is None:
                 # Modelo no disponible en tiempo de ejecución → fallback por deltas

@@ -189,6 +189,14 @@ export default function AnalysisScreen() {
           date:       new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
         };
         AsyncStorage.setItem(LAST_GAME_KEY, JSON.stringify(lastGameData));
+        // Registrar el vídeo como analizado en el mapa global
+        AsyncStorage.getItem('analyzedVideos')
+          .then((raw) => {
+            const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+            map[file as string] = analisisId;
+            return AsyncStorage.setItem('analyzedVideos', JSON.stringify(map));
+          })
+          .catch(() => {});
 
         setPhase('done');
       },
