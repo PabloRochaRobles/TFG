@@ -644,27 +644,30 @@ def detect_board_state(
         x1, y1, x2, y2 = box.xyxy[0].tolist()
 
         if use_original:
-            # Punto base: centro inferior del bbox = donde la pieza apoya en el tablero
-            base_x = ((x1 + x2) / 2) * sx
-            base_y = y2 * sy
-            # Proyectar al espacio warpeado (0–NORMALIZED_SIZE) con la homografía M
-            pt = np.array([[[base_x, base_y]]], dtype=np.float32)
-            warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
+            # Punto base: intentar primero con el centro inferior del bbox
+            # (donde la pieza toca el tablero), y si cae fuera del tablero usar
+            # el centro del bbox como fallback (útil para piezas en bordes del frame).
+            base_x_raw = ((x1 + x2) / 2) * sx
+            # Candidatos de base_y: 100% bottom, 85% bottom / 15% top (near-bottom), 50% center
+            base_y_candidates = [y2 * sy, (y1 * 0.15 + y2 * 0.85) * sy, ((y1 + y2) / 2) * sy]
 
-            # Aplicar offset de auto-calibración: compensa el sesgo sistemático
-            # del bbox de YOLO (la base se reporta unos pixeles arriba de la
-            # base real, lo que en el warped equivale a 1 fila o más).
-            wpt_x = warped_pt[0] + _yolo_offset_x
-            wpt_y = warped_pt[1] + _yolo_offset_y
+            x_center = y_center = None
+            for base_y_candidate in base_y_candidates:
+                pt = np.array([[[base_x_raw, base_y_candidate]]], dtype=np.float32)
+                warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
+                wpt_x = warped_pt[0] + _yolo_offset_x
+                wpt_y = warped_pt[1] + _yolo_offset_y
 
-            # IGNORAR piezas que caen fuera del tablero físico (ej. tablero digital en el vídeo)
-            # Margen de 50px por si la base asoma ligeramente del borde de la casilla
-            if wpt_x < -50 or wpt_x > NORMALIZED_SIZE + 50 or \
-               wpt_y < -50 or wpt_y > NORMALIZED_SIZE + 50:
-                continue
+                if wpt_x < -50 or wpt_x > NORMALIZED_SIZE + 50 or \
+                   wpt_y < -50 or wpt_y > NORMALIZED_SIZE + 50:
+                    continue  # fuera del tablero, probar siguiente candidato
 
-            x_center = float(np.clip(wpt_x, 0, NORMALIZED_SIZE))
-            y_center = float(np.clip(wpt_y, 0, NORMALIZED_SIZE))
+                x_center = float(np.clip(wpt_x, 0, NORMALIZED_SIZE))
+                y_center = float(np.clip(wpt_y, 0, NORMALIZED_SIZE))
+                break  # primer candidato válido dentro del tablero
+
+            if x_center is None:
+                continue  # ningún candidato cae dentro del tablero → ignorar
         else:
             x_center = ((x1 + x2) / 2) * scale_factor
             y_center = ((y1 + y2) / 2) * scale_factor

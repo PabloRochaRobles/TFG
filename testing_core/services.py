@@ -149,7 +149,7 @@ SCORING_STRATEGY = "full_state+best_frame"
 
 # Tamaño de la ventana de frames estables a evaluar cuando best_frame está activo.
 # Más alto → más tolerancia, mayor latencia y costo computacional.
-BEST_FRAME_WINDOW_SIZE = 5
+BEST_FRAME_WINDOW_SIZE = 3
 
 _FRAMES_DEFAULTS: dict = {
     "THRESHOLD_PIXEL_BINARY": 15,
@@ -817,12 +817,14 @@ def _match_state_change_to_legal_move_full_state(
     except ImportError:
         from chess_detector import _board_to_state, _fen_agreement_score
 
-    # Los scores reales del agreement están típicamente entre +5 y +20 cuando
-    # el match es bueno, y +0 a -3 cuando es malo. La diferencia entre el
-    # mejor y el segundo suele rondar 1-3 puntos en jugadas claras.
-    ACCEPT_THRESHOLD = 3.0       # Score absoluto mínimo para aceptar (calibrar)
-    MARGIN_REQUIRED  = 0.4       # Diferencia mínima vs segundo mejor
-    ABSOLUTE_MIN_MARGIN = 0.2    # Inviolable
+    # Los scores reales del agreement están típicamente entre +2 y +8 cuando
+    # el match es bueno con la lógica delta-aware (solo las casillas que cambiaron
+    # contribuyen activamente). ACCEPT_THRESHOLD bajado de 3.0 → 1.2 para
+    # no descartar movimientos con YOLO parcial (~50% recall).
+    # MARGIN_REQUIRED bajado de 0.4 → 0.3 ya que el espacio de scores es más estrecho.
+    ACCEPT_THRESHOLD = 1.2       # Score absoluto mínimo para aceptar
+    MARGIN_REQUIRED  = 0.3       # Diferencia mínima vs segundo mejor
+    ABSOLUTE_MIN_MARGIN = 0.15   # Inviolable
 
     if prev_robust is None:
         return None
@@ -843,9 +845,12 @@ def _match_state_change_to_legal_move_full_state(
         expected = _board_to_state(legal_board)   # estado canónico tras el move
         legal_board.pop()
 
-        # === Señal PRIMARIA: coherencia global delta-aware ===
+        # === Señal PRIMARIA: Coherencia global delta-aware con casillas de movimiento protegidas ===
         match_score = 0.0
         all_squares = set(expected.keys()) | set(robust_state.keys())
+        # Las casillas físicamente implicadas en este movimiento (incluyendo
+        # casillas de torre en enroque y captura al paso) nunca se perdonan.
+        move_squares = _move_changed_squares(legal_board, move)
         for sq in all_squares:
             c_sym = expected.get(sq, '')
             y_sym = robust_state.get(sq, '')
@@ -857,8 +862,12 @@ def _match_state_change_to_legal_move_full_state(
                 prev_c_sym = prev_expected.get(sq, '')
                 prev_y_sym = prev_robust.get(sq, '')
                 
-                # Si el error es el mismo (YOLO sigue tropezando con la misma oclusión), lo perdonamos.
-                if c_sym == prev_c_sym and y_sym == prev_y_sym:
+                # Las casillas implicadas en el movimiento candidato NUNCA se perdonan:
+                # son exactamente las que queremos evaluar para discriminar movimientos.
+                # Para el resto: si el error es el mismo (YOLO sigue tropezando con la
+                # misma oclusión), lo perdonamos para no penalizar el candidato correcto
+                # por ruido sistemático ajeno al movimiento.
+                if sq not in move_squares and c_sym == prev_c_sym and y_sym == prev_y_sym:
                     continue
                     
                 if c_sym and y_sym: match_score -= 0.50
@@ -901,12 +910,12 @@ def _match_state_change_to_legal_move_full_state(
 
     dynamic_margin = MARGIN_REQUIRED
     
-    # Si la coherencia global es altísima (> 10 piezas bien),
-    # permitimos que el pixel-diff decida con un margen menor.
-    if best_score >= 10.0:
+    # Con scores delta-aware el rango es más estrecho; si el mejor score es
+    # alto (≥ 4.0) permitir margen más pequeño (el pixel-diff ya discrimina).
+    if best_score >= 4.0:
         dynamic_margin = ABSOLUTE_MIN_MARGIN
-    elif best_score >= 5.0 and len(pixel_changed) <= 4:
-        dynamic_margin = 0.4
+    elif best_score >= 2.0 and len(pixel_changed) <= 4:
+        dynamic_margin = 0.3
 
     if best_score < ACCEPT_THRESHOLD:
         alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
@@ -961,7 +970,7 @@ def _match_state_change_to_legal_move(
     except ImportError:
         from chess_detector import _board_to_state
 
-    ACCEPT_THRESHOLD = 1.2     # Reducido: acepta con 1 sola señal fuerte de YOLO o pixel
+    ACCEPT_THRESHOLD = 1.5     # Subido de 1.2: señales YOLO valen 2.0 c/u
     MARGIN_REQUIRED  = 0.4
 
     if prev_robust is None:
@@ -1000,32 +1009,38 @@ def _match_state_change_to_legal_move(
 
         score = 0.0
 
-        # === Señal YOLO 1: ¿desapareció la pieza del origen? (Peso balanceado) ===
+        # === Señal YOLO 1: ¿desapareció la pieza del origen? ===
+        # Peso aumentado (1.5 → 2.0): señal YOLO explícita es más fiable que
+        # pixel-diff cuando las piezas tienen altura (perspectiva lateral).
         if prev_orig == moving_sym and moving_sym and not now_orig:
-            score += 1.2    # YOLO confirma desaparición
+            score += 2.0    # YOLO confirma desaparición
         elif prev_orig == moving_sym and now_orig == moving_sym:
-            score -= 1.0    # CONTRADICCIÓN: la pieza sigue en origen
+            score -= 1.5    # CONTRADICCIÓN: la pieza sigue en origen
 
-        # === Señal YOLO 2: ¿apareció la pieza esperada en destino? (Peso balanceado) ===
+        # === Señal YOLO 2: ¿apareció la pieza esperada en destino? ===
         if not prev_dest and now_dest and now_dest == expected_dest:
-            score += 1.2    # YOLO confirma aparición
+            score += 2.0    # YOLO confirma aparición
         elif prev_dest == captured_sym and captured_sym and now_dest == expected_dest:
-            score += 1.2    # YOLO confirma captura
+            score += 2.0    # YOLO confirma captura
         elif now_dest and now_dest != expected_dest:
-            score -= 1.0
+            score -= 1.5
 
-        # === Señal PRIMARIA (NUEVO PARADIGMA): Diferencia Física ===
+        # === Señal PRIMARIA (pixel-diff): Diferencia Física ===
+        # Peso reducido (1.5 → 0.8) para que la señal YOLO domine.
+        # El pixel-diff es menos fiable en vista lateral porque las piezas
+        # altas proyectan sombras en casillas adyacentes (off-by-one).
+        # Sigue siendo útil como tiebreaker entre candidatos con igual score YOLO.
         expected_sqs = _move_changed_squares(legal_board, move)
         if pixel_changed:
             pixel_overlap = len(pixel_changed & expected_sqs)
-            score += 1.5 * pixel_overlap  # Peso MUY ALTO a la diferencia física
+            score += 0.8 * pixel_overlap
 
             missing_changes = len(expected_sqs - pixel_changed)
-            score -= 0.1 * missing_changes
+            score -= 0.05 * missing_changes
 
             # Tiebreaker continuo: desempata sumando magnitud real de diferencia
             diff_sum = sum(pixel_changed_dict.get(sq, 0.0) for sq in expected_sqs)
-            score += 0.001 * diff_sum
+            score += 0.0005 * diff_sum
 
         # Tiebreaker leve para capturas
         if legal_board.is_capture(move):
@@ -1051,20 +1066,15 @@ def _match_state_change_to_legal_move(
             san = mv.uci()
         top_alts.append((san, -neg))
 
-    # Margen mínimo absoluto inviolable: si dos candidatos están separados por
-    # menos de ABSOLUTE_MIN_MARGIN, son indistinguibles aunque ambos tengan
-    # score alto (un score >= 3.0 NO implica certeza si el segundo también
-    # llega a 3.0; suele significar que ambos sufren la misma contaminación
-    # — p.ej. mano sobre el tablero inflando el pixel-diff de varias casillas).
     ABSOLUTE_MIN_MARGIN = 0.2
 
     dynamic_margin = MARGIN_REQUIRED
 
-    # Score muy alto Y margen suficiente → relajamos el margen exigido,
-    # pero NUNCA por debajo del mínimo absoluto.
-    if best_score >= 3.0:
+    # Con los nuevos pesos (YOLO=2.0), un score ≥ 2.0 indica al menos
+    # una señal YOLO confirmada → podemos relajar el margen exigido.
+    if best_score >= 2.0:
         dynamic_margin = ABSOLUTE_MIN_MARGIN
-    elif best_score >= 1.4 and len(pixel_changed) <= 4:
+    elif best_score >= 1.5 and len(pixel_changed) <= 4:
         dynamic_margin = ABSOLUTE_MIN_MARGIN
 
     if best_score < ACCEPT_THRESHOLD:
@@ -1327,6 +1337,19 @@ def extract_key_frames(video_path, coords, progress_key=None):
             continue
 
         # ── FASE 2: ventana estable alcanzada — recolectar shots y votar ─────
+        # Filtrar frames con mano ANTES de añadir al buffer: si la mano sigue
+        # visible en un frame estable (jugador lento en retirar la mano), el
+        # detector YOLO podría incluir el brazo como pieza. Con votación 2/3,
+        # si 2 frames tienen mano, los artefactos se consolidan como "piezas".
+        if _hand_in_frame(frame):
+            # No añadir al buffer; tampoco resetear stable_run para no retrasar
+            # innecesariamente la captura cuando la mano se retira rápido.
+            # Sí limpiar el buffer ya acumulado para descartar frames previos
+            # que también pueden estar contaminados.
+            if voting_buffer:
+                voting_buffer.clear()
+            continue
+
         voting_buffer.append((warped, frame.copy()))
 
         if len(voting_buffer) < YOLO_VOTING_SHOTS:
@@ -1340,6 +1363,38 @@ def extract_key_frames(video_path, coords, progress_key=None):
         robust = _vote_per_square(states, YOLO_VOTE_MIN_AGREE)
         warped_chosen, frame_chosen = voting_buffer[-1]
         voting_buffer.clear()
+
+        # ── Filtrado canónico post-votación ──────────────────────────────────
+        # Si conocemos el estado canónico actual (ya pasamos el bootstrap),
+        # eliminamos detecciones YOLO que contradicen casillas que el tablero
+        # canónico dice que no deberían haber cambiado con respecto al
+        # último keyframe aceptado.
+        # No eliminamos las casillas que podrían corresponder a un movimiento
+        # real (las comparamos en Phase 4). Solo eliminamos detecciones en
+        # casillas que el canónico y YOLO previo ya marcaban como vacías y
+        # que YOLO ahora dice estar ocupadas (falsos positivos puros del Bayes).
+        if last_robust_state is not None:
+            robust_filtered = {}
+            for sq, sym in robust.items():
+                canon_piece = legal_board.piece_at(sq)
+                # Mantener la detección si:
+                # (a) El canónico también tiene pieza en esta casilla (coincidencia)
+                # (b) El canónico tiene pieza diferente (posible movimiento real)
+                # (c) El canónico dice vacío Y el YOLO previo también decía vacío
+                #     → es un FP puro del Bayes, eliminar.
+                # Criterio: eliminar SOLO si canonico=vacío Y yolo_prev=vacío Y yolo_ahora=pieza
+                if canon_piece is None and last_robust_state.get(sq) is None:
+                    # Falso positivo nuevo que no estaba antes → descartar
+                    logger.debug("[TRIGGER] FP canónico descartado: %s=%s (canónico vacío, YOLO previo vacío)",
+                                 chess.square_name(sq), sym)
+                else:
+                    robust_filtered[sq] = sym
+            if len(robust_filtered) >= MIN_PIECES_TRUST:
+                robust = robust_filtered
+            else:
+                # Si el filtro elimina demasiadas piezas, usar el estado sin filtrar
+                logger.debug("[TRIGGER] Filtrado canónico descartado (demasiado agresivo): %d→%d piezas",
+                             len(robust), len(robust_filtered))
 
         if len(robust) < MIN_PIECES_TRUST:
             rejected_pieces += 1
@@ -1355,11 +1410,12 @@ def extract_key_frames(video_path, coords, progress_key=None):
             # más arriba de donde la pieza realmente toca el tablero).
             calibrate_yolo_offset(warped_chosen, frame_chosen, mat)
 
-            # Re-ejecutar la votación con el offset ya aplicado para que
-            # last_robust_state quede correcto desde el inicio.
-            states_post = [detect_board_state(w, original_frame=o, M=mat)
-                           for w, o in [(warped_chosen, frame_chosen)] * YOLO_VOTING_SHOTS]
-            robust = _vote_per_square(states_post, YOLO_VOTE_MIN_AGREE) or robust
+            # Re-ejecutar YOLO UNA sola vez con el offset ya aplicado.
+            # El modelo es determinista → repetir el mismo frame no añade información.
+            # Usamos el frame elegido del voting_buffer (mejor calidad visual).
+            state_recalibrated = detect_board_state(warped_chosen, original_frame=frame_chosen, M=mat)
+            if state_recalibrated and len(state_recalibrated) >= MIN_PIECES_TRUST:
+                robust = state_recalibrated
 
             last_robust_state = robust
             last_accepted_warped = warped_chosen.copy()
@@ -1394,8 +1450,14 @@ def extract_key_frames(video_path, coords, progress_key=None):
             continue
 
         if _hand_in_frame(frame_chosen):
-            logger.info("[TRIGGER] Mano visible frame %d — esperando retirada", frame_idx)
+            # Revertir la actualización de last_robust_state: el estado detectado
+            # durante la ventana con mano está contaminado (oclusiones, sombras).
+            # Si no revertimos, prev_robust en la próxima iteración será el estado
+            # de la mano y el delta resultante será artificialmente grande → falsos positivos.
+            last_robust_state = prev_robust
+            logger.info("[TRIGGER] Mano visible frame %d — estado revertido, esperando retirada", frame_idx)
             stable_run = 0
+            voting_buffer.clear()
             continue
 
         # ── FASE 4: validación legal por PIXEL-DIFF + python-chess ────────────
