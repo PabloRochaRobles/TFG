@@ -75,9 +75,37 @@ def main():
 
     # 1. Obtener primer frame y esquinas
     first_frame = get_first_frame(video_path)
-    
+
+    # Detectar esquinas automáticamente para validar antes de preguntar
+    _corners_preview = auto_detect_board_corners(first_frame)
+    _needs_manual = False
+    if _corners_preview is not None:
+        _h, _w = first_frame.shape[:2]
+        _xs = [float(p[0]) for p in _corners_preview]
+        _ys = [float(p[1]) for p in _corners_preview]
+        _cx = (max(_xs) - min(_xs)) / _w
+        _cy = (max(_ys) - min(_ys)) / _h
+        # Fallback central = 80% cobertura exacta (mx=10%, my=10%)
+        # Cualquier detección fiable tendrá bordes no-simétricos y < 85%
+        _mx_expected, _my_expected = _w * 0.10, _h * 0.10
+        _is_fallback = (
+            abs(min(_xs) - _mx_expected) < 5 and
+            abs(max(_xs) - (_w - _mx_expected)) < 5
+        )
+        if _cx > 0.88 or _cy > 0.88 or _is_fallback:
+            _needs_manual = True
+            print(f"\n{'='*65}")
+            print(f"  ATENCION: Auto-deteccion de esquinas FALLIDA")
+            print(f"  El sistema NO pudo localizar el tablero en el video.")
+            print(f"  SIN CALIBRACION MANUAL EL SISTEMA NO FUNCIONARA.")
+            print(f"  Debes marcar las 4 esquinas del tablero (a1, a8, h8, h1).")
+            print(f"{'='*65}\n")
+
     # Preguntar si se desea calibrar manualmente simulando la App
-    ans = input("¿Deseas calibrar las esquinas manualmente antes de empezar? (s/n): ").strip().lower()
+    if _needs_manual:
+        ans = input("Calibracion manual REQUERIDA. Proceder? (s/n): ").strip().lower()
+    else:
+        ans = input("¿Deseas calibrar las esquinas manualmente antes de empezar? (s/n): ").strip().lower()
     if ans == 's':
         points = []
         def mouse_callback(event, x, y, flags, param):
@@ -141,11 +169,11 @@ def main():
     # Lista de movimientos reales proporcionada para test3.mp4
     GROUND_TRUTH = [
         "d2d4", "g8f6", "c2c4", "e7e6", "g1f3", "b7b6", "g2g3", "c8b7",
-        "f8b2", "c1d2", "c7c5", "d2b4", "c5b4", "e1g1", "a7a5", "a2a3",
-        "b8a6", "a3b4", "a6b4", "b1c3", "e8g8", "d1d2", "a8c8", "b2b3",
-        "f6e4", "c3e4", "b7e4", "f3e5", "e4g2", "g1g2", "d7d6", "e5d3",
-        "b4d3", "d2d3", "d6d5", "f1c1", "d8d6", "d3c3", "c8c6", "c4c5",
-        "d6b8", "c3d2", "h7h6", "c5b6"
+        "f1g2", "f8b4", "c1d2", "c7c5", "d2b4", "c5b4", "e1g1", "a7a5",
+        "a2a3", "b8a6", "a3b4", "a6b4", "b1c3", "e8g8", "d1d2", "a8c8",
+        "b2b3", "f6e4", "c3e4", "b7e4", "f3e5", "e4g2", "g1g2", "d7d6",
+        "e5d3", "b4d3", "d2d3", "d6d5", "f1c1", "d8d6", "d3c3", "c8c6",
+        "c4c5", "d6b8", "c3d2", "h7h6", "c5b6"
     ]
 
     failed = False
@@ -189,8 +217,15 @@ if __name__ == "__main__":
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
+    # Forzar UTF-8 en la consola de Windows para que los caracteres especiales
+    # (tildes, flechas, emojis del log) no rompan el StreamHandler de logging.
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
     # Abre el archivo de log y crea el duplicador de salida
-    with open(log_filepath, 'w', encoding='utf-8') as logfile:
+    with open(log_filepath, 'w', encoding='utf-8', errors='replace') as logfile:
         tee = Tee(original_stdout, logfile)
         sys.stdout = tee
         sys.stderr = tee
@@ -199,14 +234,28 @@ if __name__ == "__main__":
         # capturando así TODOS los mensajes en consola y en el fichero de log.
         import logging as _logging
         _fmt = _logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-        _handler = _logging.StreamHandler(sys.stdout)   # sys.stdout es ya el Tee
+        # Escribir directamente al fichero de log (utf-8) en vez del Tee que
+        # pasa por la consola cp1252 y puede fallar con caracteres especiales.
+        _handler = _logging.StreamHandler(logfile)
         _handler.setLevel(_logging.DEBUG)
         _handler.setFormatter(_fmt)
+        # Handler adicional para consola con errors=replace
+        _console_handler = _logging.StreamHandler(original_stdout)
+        _console_handler.setLevel(_logging.INFO)   # Solo INFO+ en consola
+        _console_handler.setFormatter(_fmt)
         _svc_logger = _logging.getLogger('services')
         _svc_logger.handlers.clear()
         _svc_logger.addHandler(_handler)
+        _svc_logger.addHandler(_console_handler)
         _svc_logger.setLevel(_logging.DEBUG)
         _svc_logger.propagate = False
+        # Aplicar el mismo logging a chess_detector
+        _cd_logger = _logging.getLogger('chess_detector')
+        _cd_logger.handlers.clear()
+        _cd_logger.addHandler(_handler)
+        _cd_logger.addHandler(_console_handler)
+        _cd_logger.setLevel(_logging.DEBUG)
+        _cd_logger.propagate = False
 
         try:
             main()

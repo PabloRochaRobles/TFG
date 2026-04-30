@@ -33,7 +33,14 @@ try:
     try:
         import mediapipe.solutions.hands as _mp_hands           # path estándar
     except ModuleNotFoundError:
-        import mediapipe.python.solutions.hands as _mp_hands    # fallback Windows
+        try:
+            import mediapipe.python.solutions.hands as _mp_hands  # fallback Windows
+        except ModuleNotFoundError:
+            # Fallback final: en algunas builds (mediapipe 0.10.14+) el __init__
+            # ejecuta `del python` tras exponer el alias, lo que rompe el path
+            # `import mediapipe.X.Y` pero deja accesible `mp.solutions.hands`
+            # como atributo. Lo recuperamos así.
+            _mp_hands = _mp.solutions.hands  # type: ignore[attr-defined]
     _MEDIAPIPE_AVAILABLE = True
 except BaseException as _e:
     # Capturamos también BaseException porque algunas versiones de mediapipe en
@@ -145,7 +152,10 @@ CELL_ROI_BOTTOM = 0.92
 # - SCORING_STRATEGY = "best_frame"  → A sola
 # - SCORING_STRATEGY = "full_state+best_frame"  → ambas combinadas (paranoia)
 # =============================================================================
-SCORING_STRATEGY = "full_state+best_frame"
+# "full_state" produce scores NEGATIVOS cuando YOLO detecta <50% de piezas
+# (el scorer penaliza todas las piezas no detectadas del tablero canónico).
+# "best_frame" con el scorer delta-based es el que mejor funciona en práctica.
+SCORING_STRATEGY = "best_frame"
 
 # Tamaño de la ventana de frames estables a evaluar cuando best_frame está activo.
 # Más alto → más tolerancia, mayor latencia y costo computacional.
@@ -782,6 +792,7 @@ def _move_changed_squares(legal_board, move):
 
 def _match_state_change_to_legal_move_full_state(
     legal_board, prev_warped, curr_warped, robust_state, prev_robust=None,
+    force_accept=False,
 ):
     """
     OPCIÓN C — Scoring por COMPARACIÓN DE ESTADO COMPLETO con pesos calibrados.
@@ -918,15 +929,21 @@ def _match_state_change_to_legal_move_full_state(
         dynamic_margin = 0.3
 
     if best_score < ACCEPT_THRESHOLD:
-        alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
-        logger.info("[FASE 4 FullState] Rechazado por score bajo: best=%.2f < %s. Top: %s",
-                    best_score, ACCEPT_THRESHOLD, alts_str)
-        return None
+        if not force_accept:
+            alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
+            logger.info("[FASE 4 FullState] Rechazado por score bajo: best=%.2f < %s. Top: %s",
+                        best_score, ACCEPT_THRESHOLD, alts_str)
+            return None
+        else:
+            logger.info("[FASE 4 FullState FORCE] Aceptación forzada con score bajo: best=%.2f", best_score)
     if margin < dynamic_margin:
-        alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
-        logger.info("[FASE 4 FullState] Rechazado por margen bajo: margin=%.2f < %.2f. Top: %s",
-                    margin, dynamic_margin, alts_str)
-        return None
+        if not force_accept:
+            alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
+            logger.info("[FASE 4 FullState] Rechazado por margen bajo: margin=%.2f < %.2f. Top: %s",
+                        margin, dynamic_margin, alts_str)
+            return None
+        else:
+            logger.info("[FASE 4 FullState FORCE] Aceptación forzada con margen bajo: margin=%.2f", margin)
 
     expected_sqs_best = _move_changed_squares(legal_board, best_move)
     err = max(0, len(expected_sqs_best) - len(pixel_changed & expected_sqs_best))
@@ -936,6 +953,7 @@ def _match_state_change_to_legal_move_full_state(
 
 def _match_state_change_to_legal_move(
     legal_board, prev_warped, curr_warped, robust_state, prev_robust=None,
+    force_accept=False,
 ):
     """
     Phase 4: identifica el movimiento legal usando el DELTA DEL ESTADO YOLO
@@ -970,23 +988,33 @@ def _match_state_change_to_legal_move(
     except ImportError:
         from chess_detector import _board_to_state
 
-    ACCEPT_THRESHOLD = 1.5     # Subido de 1.2: señales YOLO valen 2.0 c/u
-    MARGIN_REQUIRED  = 0.4
+    ACCEPT_THRESHOLD = 1.0     # Bajado de 1.5: acepta 2 pixel-hits (1.6) sin señal YOLO
+    MARGIN_REQUIRED  = 0.3
 
     if prev_robust is None:
         return None
 
     # Pixel-diff sobre Hough grid (señal secundaria).
     # top_k=6 elimina las casillas vecinas "salpicadas" por la perspectiva del
-    # peón que se movió. threshold=8 evita que ruido tenue arrastre casillas
-    # legítimas fuera del top_k cuando una jugada real es sutil (peón que
-    # avanza una casilla en zonas con poco contraste).
+    # peón que se movió. Threshold bajado a 4 (desde 8) para capturar cambios
+    # sutiles como movimientos de caballo en esquinas (g1→f3 era invisible con
+    # threshold=8). Top_k aumentado a 8 para incluir más casillas candidatas
+    # sin perder las de origen+destino del movimiento real.
     pixel_changed_dict = {}
     if prev_warped is not None and curr_warped is not None:
         pixel_changed_dict = _pixel_changed_squares(
-            prev_warped, curr_warped, top_k=6, threshold=8
+            prev_warped, curr_warped, top_k=8, threshold=4
         )
     pixel_changed = set(pixel_changed_dict.keys())
+
+    try:
+        import chess as _chess_ref
+        _sq_names = {getattr(_chess_ref, s): s for s in dir(_chess_ref) if len(s) == 2 and s[0].isalpha() and s[1].isdigit()}
+        _pc_sorted = sorted(pixel_changed, key=lambda sq: -pixel_changed_dict.get(sq, 0))
+        _pc_names = [_sq_names.get(sq, str(sq)) for sq in _pc_sorted]
+        logger.debug("[FASE 4 PIXEL] pixel_changed: %s", _pc_names)
+    except Exception:
+        pass
 
     candidates = []   # list[(neg_score, move, expected_state)]
     for move in legal_board.legal_moves:
@@ -1010,20 +1038,23 @@ def _match_state_change_to_legal_move(
         score = 0.0
 
         # === Señal YOLO 1: ¿desapareció la pieza del origen? ===
-        # Peso aumentado (1.5 → 2.0): señal YOLO explícita es más fiable que
-        # pixel-diff cuando las piezas tienen altura (perspectiva lateral).
-        if prev_orig == moving_sym and moving_sym and not now_orig:
-            score += 2.0    # YOLO confirma desaparición
-        elif prev_orig == moving_sym and now_orig == moving_sym:
-            score -= 1.5    # CONTRADICCIÓN: la pieza sigue en origen
+        # Requiere además que el origen esté en pixel_changed: si YOLO dice que
+        # la pieza se fue pero el pixel no muestra cambio en esa casilla, es ruido
+        # de YOLO (casilla fuera del ángulo de visión de la cámara) y no una señal
+        # real de movimiento.
+        # Peso reducido a 0.5: YOLO entre triggers consecutivos genera "fantasmas"
+        # (casilla detectada/no-detectada por ruido) que con peso 2.0 dominaban
+        # sobre la señal pixel real. Con 0.5, YOLO es tiebreaker no dominante.
+        if prev_orig == moving_sym and moving_sym and not now_orig and move.from_square in pixel_changed:
+            score += 0.5    # YOLO confirma desaparición (tiebreaker)
 
         # === Señal YOLO 2: ¿apareció la pieza esperada en destino? ===
         if not prev_dest and now_dest and now_dest == expected_dest:
-            score += 2.0    # YOLO confirma aparición
+            score += 0.5    # YOLO confirma aparición (tiebreaker)
         elif prev_dest == captured_sym and captured_sym and now_dest == expected_dest:
-            score += 2.0    # YOLO confirma captura
+            score += 0.5    # YOLO confirma captura (tiebreaker)
         elif now_dest and now_dest != expected_dest:
-            score -= 1.5
+            score -= 0.3
 
         # === Señal PRIMARIA (pixel-diff): Diferencia Física ===
         # Peso reducido (1.5 → 0.8) para que la señal YOLO domine.
@@ -1039,8 +1070,10 @@ def _match_state_change_to_legal_move(
             score -= 0.05 * missing_changes
 
             # Tiebreaker continuo: desempata sumando magnitud real de diferencia
+            # Peso aumentado de 0.0005 → 0.005 para que diferencias de magnitud
+            # sean visibles al comparar candidatos empatados (p.ej. Nf3 vs Nh3).
             diff_sum = sum(pixel_changed_dict.get(sq, 0.0) for sq in expected_sqs)
-            score += 0.0005 * diff_sum
+            score += 0.005 * diff_sum
 
         # Tiebreaker leve para capturas
         if legal_board.is_capture(move):
@@ -1070,22 +1103,29 @@ def _match_state_change_to_legal_move(
 
     dynamic_margin = MARGIN_REQUIRED
 
-    # Con los nuevos pesos (YOLO=2.0), un score ≥ 2.0 indica al menos
-    # una señal YOLO confirmada → podemos relajar el margen exigido.
-    if best_score >= 2.0:
-        dynamic_margin = ABSOLUTE_MIN_MARGIN
-    elif best_score >= 1.5 and len(pixel_changed) <= 4:
+    # Con YOLO reducido a 0.5, el pixel-diff (0.8 per square) es la señal
+    # primaria. Un score >= 1.6 indica al menos 2 casillas pixel confirmadas.
+    # En ese caso, el tiebreaker diff_sum ya discrimina bien → margen=0.
+    if best_score >= 1.60:
+        dynamic_margin = 0.0
+    elif best_score >= 1.0 and len(pixel_changed) <= 4:
         dynamic_margin = ABSOLUTE_MIN_MARGIN
 
     if best_score < ACCEPT_THRESHOLD:
-        alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
-        logger.info("[FASE 4] Rechazado por score bajo: best=%.2f < %s. Top: %s", best_score, ACCEPT_THRESHOLD, alts_str)
-        return None
+        if not force_accept or best_score <= 0.0:
+            alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
+            logger.info("[FASE 4] Rechazado por score bajo: best=%.2f < %s. Top: %s", best_score, ACCEPT_THRESHOLD, alts_str)
+            return None
+        else:
+            logger.info("[FASE 4 FORCE] Aceptación forzada con score bajo: best=%.2f < %s", best_score, ACCEPT_THRESHOLD)
     if margin < dynamic_margin:
-        alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
-        logger.info("[FASE 4] Rechazado por margen bajo: margin=%.2f < %.2f. Top: %s",
-                    margin, dynamic_margin, alts_str)
-        return None
+        if not force_accept:
+            alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts)
+            logger.info("[FASE 4] Rechazado por margen bajo: margin=%.2f < %.2f. Top: %s",
+                        margin, dynamic_margin, alts_str)
+            return None
+        else:
+            logger.info("[FASE 4 FORCE] Aceptación forzada con margen bajo: margin=%.2f < %.2f", margin, dynamic_margin)
 
     expected_sqs_best = _move_changed_squares(legal_board, best_move)
     err = max(0, len(expected_sqs_best) - len(pixel_changed & expected_sqs_best))
@@ -1093,11 +1133,136 @@ def _match_state_change_to_legal_move(
     return (best_move, best_state, err, top_alts)
 
 
+def _try_multi_move_match(
+    legal_board, prev_warped, curr_warped, robust_state, prev_robust=None,
+):
+    """
+    Fix B — Detección multi-movimiento.
+
+    Cuando el scoring single-move falla (match=None), intentamos ver si entre
+    el último keyframe aceptado y el frame actual ocurrieron DOS movimientos
+    consecutivos (moveA del jugador actual + moveB del oponente).
+
+    Estrategia:
+      1. Calcular pixel_changed entre prev_warped y curr_warped.
+      2. Para cada moveA legal del jugador actual:
+         - Calcular las casillas que moveA toca (sqsA).
+         - Push moveA → generar legal_moves del oponente.
+         - Para cada moveB legal del oponente:
+           - Calcular sqsB.
+           - Score = overlap(sqsA ∪ sqsB, pixel_changed) * 0.8
+           - Bonus si sqsA y sqsB juntos cubren >= 3 casillas de pixel_changed
+         - Pop moveA.
+      3. Elegir el par (moveA, moveB) con mayor score combinado.
+      4. Aceptar solo si:
+         - score >= 2.0 (al menos ~3 casillas de overlap)
+         - margin >= 0.4 sobre el segundo par
+         - |sqsA ∪ sqsB ∩ pixel_changed| >= 3
+
+    Devuelve: (moveA, moveB, err, top_alts) o None si no hay par válido.
+    """
+    try:
+        from .chess_detector import _board_to_state
+    except ImportError:
+        from chess_detector import _board_to_state
+
+    if prev_warped is None or curr_warped is None or prev_robust is None:
+        return None
+
+    pixel_changed_dict = _pixel_changed_squares(
+        prev_warped, curr_warped, top_k=10, threshold=4
+    )
+    pixel_changed = set(pixel_changed_dict.keys())
+
+    if len(pixel_changed) < 3:
+        return None   # Muy pocos cambios para justificar 2 movimientos
+
+    MULTI_ACCEPT_THRESHOLD = 3.5
+    MIN_OVERLAP = 5         # combinado (moveA ∪ moveB)
+    MIN_OVERLAP_PER_MOVE = 1   # cada movimiento aporta evidencia
+    UNIQUENESS_MARGIN = 0.3    # si top1 - top2 < esto y top2 toca distintas casillas → ambiguo
+
+    candidates = []   # list[(score, moveA, moveB, sqsA, sqsB)]
+
+    for moveA in legal_board.legal_moves:
+        sqsA = _move_changed_squares(legal_board, moveA)
+        # Cada movimiento debe aportar al menos 1 cambio observado
+        if len(sqsA & pixel_changed) < MIN_OVERLAP_PER_MOVE:
+            continue
+
+        legal_board.push(moveA)
+        for moveB in legal_board.legal_moves:
+            sqsB = _move_changed_squares(legal_board, moveB)
+            if len(sqsB & pixel_changed) < MIN_OVERLAP_PER_MOVE:
+                continue
+            combined_sqs = sqsA | sqsB
+            overlap = len(combined_sqs & pixel_changed)
+
+            if overlap < MIN_OVERLAP:
+                continue
+
+            score = 0.8 * overlap
+            # Penalizar casillas esperadas que NO cambiaron
+            missing = len(combined_sqs - pixel_changed)
+            score -= 0.1 * missing
+            # Bonus por diff_sum en casillas del par
+            diff_sum = sum(pixel_changed_dict.get(sq, 0.0) for sq in combined_sqs)
+            score += 0.003 * diff_sum
+
+            candidates.append((score, moveA, moveB, sqsA, sqsB))
+        legal_board.pop()
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda c: -c[0])
+    best_score, best_moveA, best_moveB, best_sqsA, best_sqsB = candidates[0]
+    best_combined = best_sqsA | best_sqsB
+
+    # Unicidad: si el segundo mejor par cubre un conjunto de casillas DISTINTO
+    # (no es una variante del mismo par como Rab1 vs Rfb1), exigir margen.
+    if len(candidates) > 1:
+        _, mA2, mB2, sA2, sB2 = candidates[1]
+        second_score = candidates[1][0]
+        second_combined = sA2 | sB2
+        # Casillas únicas distintas → ambigüedad real
+        if second_combined != best_combined and (best_score - second_score) < UNIQUENESS_MARGIN:
+            logger.debug("[MULTI-MOVE] Rechazado ambiguo: top1=%.2f top2=%.2f "
+                         "(distinta cobertura)", best_score, second_score)
+            return None
+
+    if best_score < MULTI_ACCEPT_THRESHOLD:
+        logger.debug("[MULTI-MOVE] Rechazado score bajo: %.2f < %.2f",
+                     best_score, MULTI_ACCEPT_THRESHOLD)
+        return None
+
+    # Calcular error y top_alts
+    combined = best_sqsA | best_sqsB
+    err = max(0, len(combined) - len(combined & pixel_changed))
+
+    # Top-3 pares para diagnóstico
+    top_alts = []
+    for sc, mA, mB, _sa, _sb in candidates[:3]:
+        try:
+            sanA = legal_board.san(mA)
+        except Exception:
+            sanA = mA.uci()
+        legal_board.push(mA)
+        try:
+            sanB = legal_board.san(mB)
+        except Exception:
+            sanB = mB.uci()
+        legal_board.pop()
+        top_alts.append((f"{sanA}+{sanB}", sc))
+
+    return (best_moveA, best_moveB, err, top_alts)
+
+
 def _evaluate_best_frame_in_window(
     video, mat, legal_board,
     last_accepted_warped, current_warped, current_frame,
     current_robust, prev_robust, current_idx,
-    scorer, window_size=5,
+    scorer, window_size=5, force_accept=False,
 ):
     """
     OPCIÓN A — Evalúa varios frames consecutivos y elige el mejor candidato.
@@ -1128,6 +1293,7 @@ def _evaluate_best_frame_in_window(
         curr_warped=current_warped,
         robust_state=current_robust,
         prev_robust=prev_robust,
+        force_accept=force_accept,
     )
 
     # Atajo: si el frame actual ya tiene un margen amplio, no perdemos tiempo
@@ -1174,6 +1340,7 @@ def _evaluate_best_frame_in_window(
             curr_warped=warped,
             robust_state=state_now,
             prev_robust=prev_robust,
+            force_accept=force_accept,
         )
         extras_collected += 1
         if match is None:
@@ -1186,8 +1353,28 @@ def _evaluate_best_frame_in_window(
     if not candidates:
         return (None, current_warped, current_frame, current_robust, current_idx)
 
-    # Elegir el de MAYOR margen; en empate, mayor best_score
-    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    # Estrategia: elegir por (1) mayor margen, (2) mayor score, pero ADEMÁS
+    # hacer un recuento de votos para romper empates estrechos:
+    # si un movimiento gana en MAYORÍA de frames aunque con margen cero,
+    # lo preferimos sobre otros que ganan en menos frames.
+    from collections import Counter
+    vote_counter = Counter()
+    for c in candidates:
+        c_match = c[2]
+        if c_match is not None:
+            winning_move = c_match[0]   # (move, expected_state, err, top_alts)[0] = move
+            vote_counter[winning_move] += 1
+
+    if vote_counter:
+        # Reordenar candidatos: primero votos, luego margen, luego score
+        def candidate_key(c):
+            c_match = c[2]
+            votes = vote_counter.get(c_match[0], 0) if c_match else 0
+            return (votes, c[0], c[1])
+        candidates.sort(key=candidate_key, reverse=True)
+        logger.debug("[BEST-FRAME] Votos por candidato: %s",
+                     {str(mv): n for mv, n in vote_counter.most_common(5)})
+
     margin, bs, match, warped, fr, robust, idx = candidates[0]
     logger.info("[BEST-FRAME] Elegido frame %d sobre %d candidatos "
                 "(margin=%.2f, best=%.2f)", idx, len(candidates), margin, bs)
@@ -1280,6 +1467,7 @@ def extract_key_frames(video_path, coords, progress_key=None):
     rejected_range  = 0
     rejected_legal  = 0
     rejected_pieces = 0
+    consecutive_rejects = 0   # contador para aceptación forzada (Fix C)
 
     logger.info("[TRIGGER] Pipeline híbrido — absdiff(stable≥%df) + YOLO×%d-vote + diff∈[%d,%d] "
                 "+ legalidad=%s (fps=%.1f)",
@@ -1375,16 +1563,21 @@ def extract_key_frames(video_path, coords, progress_key=None):
         # que YOLO ahora dice estar ocupadas (falsos positivos puros del Bayes).
         if last_robust_state is not None:
             robust_filtered = {}
+            # Las casillas que son destino legal de cualquier movimiento NUNCA se filtran,
+            # ya que son exactamente el "arrival signal" que Phase 4 necesita para
+            # distinguir entre movimientos alternativos (p.ej. Nf3 vs Nh3).
+            legal_dest_squares = {mv.to_square for mv in legal_board.legal_moves}
             for sq, sym in robust.items():
                 canon_piece = legal_board.piece_at(sq)
                 # Mantener la detección si:
                 # (a) El canónico también tiene pieza en esta casilla (coincidencia)
                 # (b) El canónico tiene pieza diferente (posible movimiento real)
-                # (c) El canónico dice vacío Y el YOLO previo también decía vacío
+                # (c) La casilla es destino legal de algún movimiento (arrival signal)
+                # (d) El canónico dice vacío Y el YOLO previo también decía vacío
                 #     → es un FP puro del Bayes, eliminar.
-                # Criterio: eliminar SOLO si canonico=vacío Y yolo_prev=vacío Y yolo_ahora=pieza
-                if canon_piece is None and last_robust_state.get(sq) is None:
-                    # Falso positivo nuevo que no estaba antes → descartar
+                # Criterio: eliminar SOLO si canonico=vacío Y yolo_prev=vacío Y no destino legal
+                if canon_piece is None and last_robust_state.get(sq) is None and sq not in legal_dest_squares:
+                    # Falso positivo nuevo que no estaba antes y no puede ser llegada de una jugada → descartar
                     logger.debug("[TRIGGER] FP canónico descartado: %s=%s (canónico vacío, YOLO previo vacío)",
                                  chess.square_name(sq), sym)
                 else:
@@ -1439,6 +1632,7 @@ def extract_key_frames(video_path, coords, progress_key=None):
         if d == 0:
             # Misma detección que el scan anterior → sin movimiento, ignorar
             stable_run = 0
+            consecutive_rejects = 0
             continue
 
         # Sanity check: límites muy amplios, el filtro real es Phase 4
@@ -1469,8 +1663,15 @@ def extract_key_frames(video_path, coords, progress_key=None):
         else:
             _phase4_scorer = _match_state_change_to_legal_move
 
+        # Fix C: aceptación forzada tras estancamiento prolongado.
+        # Si llevamos >= FORCE_ACCEPT_AFTER_REJECTS rechazos consecutivos,
+        # aceptar el mejor candidato sin exigir threshold ni margen.
+        FORCE_ACCEPT_AFTER_REJECTS = 15
+        _force = consecutive_rejects >= FORCE_ACCEPT_AFTER_REJECTS
+
         move = None
         if USE_LEGAL_MOVE_VALIDATION:
+            pixel_ref_warped = last_accepted_warped
             # Si "best_frame" está activo, recolectamos varios candidatos y nos
             # quedamos con el mejor por score y margen. Si no, evaluamos solo
             # el frame actual (comportamiento original).
@@ -1478,10 +1679,11 @@ def extract_key_frames(video_path, coords, progress_key=None):
                 match, chosen_warped, chosen_orig, chosen_robust, chosen_idx = (
                     _evaluate_best_frame_in_window(
                         video, mat, legal_board,
-                        last_accepted_warped, warped_chosen, frame_chosen,
+                        pixel_ref_warped, warped_chosen, frame_chosen,
                         robust, prev_robust, frame_idx,
                         scorer=_phase4_scorer,
                         window_size=BEST_FRAME_WINDOW_SIZE,
+                        force_accept=_force,
                     )
                 )
                 # Reemplazar el frame elegido (puede haber avanzado en la ventana)
@@ -1489,20 +1691,100 @@ def extract_key_frames(video_path, coords, progress_key=None):
                     warped_chosen     = chosen_warped
                     frame_chosen      = chosen_orig
                     robust            = chosen_robust
-                    last_robust_state = robust
                     frame_idx         = chosen_idx
             else:
                 match = _phase4_scorer(
                     legal_board,
-                    prev_warped=last_accepted_warped,
+                    prev_warped=pixel_ref_warped,
                     curr_warped=warped_chosen,
                     robust_state=robust,
                     prev_robust=prev_robust,
+                    force_accept=_force,
                 )
+            # --- Fix B (general): SIEMPRE intentar multi-move y preferirlo
+            # solo si su evidencia de píxel es sustancialmente mayor que la
+            # del single-move. Esto cubre dos casos:
+            #   1. single falló → multi como fallback
+            #   2. single aceptó pero multi explica mucho más cambio (dos
+            #      movimientos consecutivos quedaron unidos en un único
+            #      intervalo de trigger; ej. cxb4 + O-O entre triggers).
+            multi = _try_multi_move_match(
+                legal_board,
+                prev_warped=pixel_ref_warped,
+                curr_warped=warped_chosen,
+                robust_state=robust,
+                prev_robust=prev_robust,
+            )
+            # Decisión single vs multi
+            MULTI_OVER_SINGLE_DELTA = 1.5  # multi debe ganar por >=1.5 a single
+            prefer_multi = False
+            if multi is not None:
+                _multi_score = multi[3][0][1] if multi[3] else 0.0
+                if match is None:
+                    prefer_multi = True
+                else:
+                    _single_score = match[3][0][1] if match[3] else 0.0
+                    if _multi_score >= _single_score + MULTI_OVER_SINGLE_DELTA:
+                        prefer_multi = True
+                        logger.info("[MULTI-MOVE] Preferido sobre single: "
+                                    "multi=%.2f vs single=%.2f", _multi_score, _single_score)
+
+            if prefer_multi:
+                    moveA, moveB, m_err, m_top_alts = multi
+                    try:
+                        sanA = legal_board.san(moveA)
+                    except Exception:
+                        sanA = moveA.uci()
+                    legal_board.push(moveA)
+                    try:
+                        sanB = legal_board.san(moveB)
+                    except Exception:
+                        sanB = moveB.uci()
+                    legal_board.pop()
+
+                    m_best_score = m_top_alts[0][1] if m_top_alts else 0.0
+                    m_alts_str = ", ".join(f"{san}({s:.2f})" for san, s in m_top_alts[1:])
+
+                    # Aceptar moveA
+                    legal_board.push(moveA)
+                    accepted += 1
+                    consecutive_rejects = 0
+                    logger.info("[MULTI-MOVE] ✓ Keyframe #%d (A) confirmado (frame %d, move=%s [%s], "
+                                "score=%.2f, err=%d, piezas_yolo=%d, alts=[%s])",
+                                len(key_frames)+1, frame_idx, sanA, moveA.uci(),
+                                m_best_score, m_err, len(robust), m_alts_str)
+                    key_frames.append(warped_chosen)
+                    key_frames_orig.append(frame_chosen)
+                    detected_states.append(robust)
+                    accepted_moves.append(moveA)
+
+                    # Aceptar moveB
+                    legal_board.push(moveB)
+                    accepted += 1
+                    logger.info("[MULTI-MOVE] ✓ Keyframe #%d (B) confirmado (frame %d, move=%s [%s])",
+                                len(key_frames)+1, frame_idx, sanB, moveB.uci())
+                    key_frames.append(warped_chosen)
+                    key_frames_orig.append(frame_chosen)
+                    detected_states.append(robust)
+                    accepted_moves.append(moveB)
+
+                    # Actualizar referencia
+                    last_accepted_warped = warped_chosen.copy()
+                    prev_robust = robust
+                    cooldown = COOLDOWN_AFTER_CAPTURE
+                    stable_run = 0
+                    seen_motion_since_capture = False
+                    continue
+
             if match is None:
                 rejected_legal += 1
+                consecutive_rejects += 1
                 logger.info("[TRIGGER] Sin movimiento legal compatible (d_yolo=%d) "
-                            "frame %d — descartado [piezas_yolo=%d]", d, frame_idx, len(robust))
+                            "frame %d — descartado [piezas_yolo=%d] (consec_rejects=%d)",
+                            d, frame_idx, len(robust), consecutive_rejects)
+                # Avanzar la baseline de pixel-diff al frame rechazado para que la
+                # próxima comparación sea relativa a ESTE frame (no al último keyframe
+                # aceptado que puede ser decenas de movimientos atrás).
                 stable_run = 0
                 continue
             move, expected_state, err, top_alts = match
@@ -1514,11 +1796,92 @@ def extract_key_frames(video_path, coords, progress_key=None):
             alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts[1:])
             legal_board.push(move)
             accepted += 1
+            consecutive_rejects = 0   # Reset: movimiento aceptado exitosamente
             logger.info("[TRIGGER] ✓ Keyframe #%d confirmado (frame %d, move=%s [%s], "
-                        "score=%.2f, err=%d, piezas_yolo=%d, alts=[%s])",
+                        "score=%.2f, err=%d, piezas_yolo=%d, alts=[%s]%s)",
                         len(key_frames)+1, frame_idx, move_san, move.uci(),
-                        best_score, err, len(robust), alts_str)
+                        best_score, err, len(robust), alts_str,
+                        " [FORCED]" if _force else "")
+
+            # --- Detección residual de movimiento acumulado ---
+            # Si el pixel_changed de este keyframe contiene casillas que van
+            # MÁS ALLÁ de las del movimiento aceptado, puede indicar que un
+            # segundo movimiento consecutivo ocurrió en el mismo intervalo
+            # (p.ej. e7e6 y c2c4 jugados antes de que el trigger los separara).
+            # Si las casillas residuales cubren EXACTAMENTE UN movimiento legal
+            # del jugador siguiente (sin ambigüedad), se guarda para insertar
+            # automáticamente después de confirmar el keyframe principal.
+            _residual_move = None
+            if last_accepted_warped is not None and warped_chosen is not None:
+                _pc_residual = _pixel_changed_squares(
+                    last_accepted_warped, warped_chosen, top_k=8, threshold=4
+                )
+                # Calcular las casillas del movimiento aceptado (necesita board previo)
+                legal_board.pop()
+                _accepted_sqs = _move_changed_squares(legal_board, move)
+                legal_board.push(move)
+                _remaining = set(_pc_residual.keys()) - _accepted_sqs
+                # Caso especial RECAPTURA: si el residual cae en la MISMA casilla
+                # de destino del movimiento aceptado, esa casilla NO aparece en
+                # `_remaining` porque ya fue consumida — pero la pieza visual
+                # sigue habiendo cambiado allí (ahora es la pieza recapturadora).
+                # Permitimos como "cobertura virtual" el destino del aceptado
+                # solo cuando el destino del residual coincide con él.
+                _accepted_dest = move.to_square
+                # Magnitud agregada del movimiento aceptado en pixel-diff.
+                # El residual debe tener magnitud comparable: si las casillas
+                # del residual tienen mucho menos cambio acumulado que las del
+                # aceptado, suelen ser artefactos (sombras, pequeñas vibraciones,
+                # ruido de iluminación). Umbral conservador: el residual debe
+                # alcanzar al menos el 40% de la magnitud del aceptado.
+                _accepted_mag = sum(_pc_residual.get(sq, 0.0) for sq in _accepted_sqs)
+                _MIN_RESIDUAL_MAG_RATIO = 0.40
+                _all_pixel_sqs = set(_pc_residual.keys())
+                if len(_remaining) >= 1:
+                    _residual_full = []
+                    for _rmv in legal_board.legal_moves:
+                        _rmv_sqs = _move_changed_squares(legal_board, _rmv)
+                        if not _rmv_sqs:
+                            continue
+                        _is_recapture_pattern = False
+                        # Cobertura estándar: subset de _remaining
+                        if _rmv_sqs.issubset(_remaining):
+                            pass
+                        # Cobertura recaptura: origen en pixel_changed (no consumido),
+                        # destino == destino del aceptado, y es captura legal real.
+                        elif (
+                            _rmv.to_square == _accepted_dest
+                            and _rmv.from_square in _remaining
+                            and legal_board.is_capture(_rmv)
+                        ):
+                            _is_recapture_pattern = True
+                        else:
+                            continue
+
+                        # Magnitud del residual: en el patrón recaptura, el destino
+                        # contribuye con la magnitud del cambio donde la pieza
+                        # recapturadora está visible (squa ya en pixel_changed
+                        # original via _pc_residual).
+                        _residual_mag = sum(_pc_residual.get(sq, 0.0) for sq in _rmv_sqs)
+                        if _accepted_mag > 0 and _residual_mag < _MIN_RESIDUAL_MAG_RATIO * _accepted_mag:
+                            logger.debug("[RESIDUAL] Descartado por magnitud insuficiente: "
+                                         "%s residual_mag=%.1f accepted_mag=%.1f (ratio<%.2f)",
+                                         _rmv.uci(), _residual_mag, _accepted_mag,
+                                         _MIN_RESIDUAL_MAG_RATIO)
+                            continue
+                        _residual_full.append(_rmv)
+                    if len(_residual_full) == 1:
+                        _residual_move = _residual_full[0]
+                        try:
+                            _rmv_san = legal_board.san(_residual_move)
+                        except Exception:
+                            _rmv_san = _residual_move.uci()
+                        logger.info("[RESIDUAL] Movimiento adicional detectado en misma ventana: "
+                                    "%s [%s] (remaining_pixel=%s)",
+                                    _rmv_san, _residual_move.uci(),
+                                    sorted([str(s) for s in list(_remaining)[:6]]))
         else:
+            _residual_move = None
             accepted += 1
             logger.info("[TRIGGER] ✓ Keyframe #%d confirmado (frame %d, d=%d, piezas=%d) [sin val. legal]",
                         len(key_frames)+1, frame_idx, d, len(robust))
@@ -1543,7 +1906,18 @@ def extract_key_frames(video_path, coords, progress_key=None):
         detected_states.append(last_robust_state)
         accepted_moves.append(move)   # None si USE_LEGAL_MOVE_VALIDATION=False
 
-        # Actualizar referencia pixel-diff para Phase 4 del próximo keyframe
+        # Insertar movimiento residual (si fue detectado) DESPUÉS del principal.
+        # El residual se añade con el mismo frame warped y el estado YOLO del
+        # keyframe aceptado, pero el legal_board ya tiene ese move aplicado.
+        if USE_LEGAL_MOVE_VALIDATION and _residual_move is not None:
+            legal_board.push(_residual_move)
+            accepted += 1
+            key_frames.append(warped_chosen)
+            key_frames_orig.append(frame_chosen)
+            detected_states.append(last_robust_state)
+            accepted_moves.append(_residual_move)
+
+        # Actualizar referencia pixel-diff para Phase 4 del próximo keyframe.
         last_accepted_warped = warped_chosen.copy()
 
         cooldown   = COOLDOWN_AFTER_CAPTURE
@@ -1660,6 +2034,18 @@ def auto_detect_board_corners(frame):
     gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     kernel = np.ones((5, 5), np.uint8)
 
+    def _is_fullframe_corner(corners_result, max_coverage=0.88):
+        """
+        Devuelve True si las esquinas cubren más del max_coverage del frame.
+        Indica que el algoritmo encontró los bordes del vídeo en vez del tablero.
+        Un tablero de ajedrez filmado en encuadre lateral nunca ocupa >85% del frame.
+        """
+        xs = [float(p[0]) for p in corners_result]
+        ys = [float(p[1]) for p in corners_result]
+        coverage_x = (max(xs) - min(xs)) / w
+        coverage_y = (max(ys) - min(ys)) / h
+        return coverage_x > max_coverage or coverage_y > max_coverage
+
     def _save_corner_debug(corners_result, label):
         """Dibuja las esquinas sobre el frame original y lo guarda en media/debug/."""
         vis = frame.copy()
@@ -1731,9 +2117,12 @@ def auto_detect_board_corners(frame):
                 top    = max(0.0, top);   bottom = min(float(h - 1), bottom)
                 result = np.float32([[left, top], [right, top],
                                      [right, bottom], [left, bottom]])
-                logger.info("[CORNERS] Detectado con líneas de Hough")
-                _save_corner_debug(result, "Hough lines")
-                return result
+                if _is_fullframe_corner(result):
+                    logger.warning("[CORNERS] Hough detectó el frame completo — descartado")
+                else:
+                    logger.info("[CORNERS] Detectado con líneas de Hough")
+                    _save_corner_debug(result, "Hough lines")
+                    return result
 
     # --- Estrategia 2 y 3: Canny/umbral adaptativo + contorno ---
     min_area = h * w * 0.05
@@ -1764,9 +2153,13 @@ def auto_detect_board_corners(frame):
     result = find_quad(edges2)
     if result is not None:
         result = order_corners(result)
-        logger.info("[CORNERS] Detectado con Canny + contorno")
-        _save_corner_debug(result, "Canny contour")
-        return result
+        if _is_fullframe_corner(result):
+            logger.warning("[CORNERS] Canny detectó el frame completo — descartado")
+            result = None
+        else:
+            logger.info("[CORNERS] Detectado con Canny + contorno")
+            _save_corner_debug(result, "Canny contour")
+            return result
 
     # Estrategia 3: Umbral adaptativo con CLAHE
     thresh = cv2.adaptiveThreshold(cv2.GaussianBlur(enhanced, (11, 11), 0), 255,
@@ -1776,12 +2169,16 @@ def auto_detect_board_corners(frame):
     result = find_quad(thresh)
     if result is not None:
         result = order_corners(result)
-        logger.info("[CORNERS] Detectado con umbral adaptativo")
-        _save_corner_debug(result, "adaptive threshold")
-        return result
+        if _is_fullframe_corner(result):
+            logger.warning("[CORNERS] Umbral adaptativo detectó el frame completo — descartado")
+        else:
+            logger.info("[CORNERS] Detectado con umbral adaptativo")
+            _save_corner_debug(result, "adaptive threshold")
+            return result
 
     # Fallback: recorte central del 80% (margen 10% por lado)
-    logger.warning("[CORNERS] Auto-detección falló, usando recorte central (80%)")
+    logger.warning("[CORNERS] Auto-detección falló — CALIBRACIÓN MANUAL NECESARIA.\n"
+                   "          Ejecuta de nuevo y responde 's' para marcar las 4 esquinas del tablero.")
     mx, my = w * 0.10, h * 0.10
     result = np.float32([[mx, my], [w - mx, my], [w - mx, h - my], [mx, h - my]])
     _save_corner_debug(result, "FALLBACK 80% crop")
