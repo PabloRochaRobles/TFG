@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import sys
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Daphne/Twisted establece SelectorEventLoopPolicy en Windows, que no soporta
@@ -112,6 +112,9 @@ _FRAMES_DEFAULTS: dict = {
     "REF_PIXEL_BINARY":       25,
     "LOG_INTERVAL":           300,
     "COOLDOWN_FRAMES":        20,
+    "NOISE_MULT_START":       20.0,
+    "NOISE_MULT_END":         10.0,
+    "NOISE_MULT_REF":         40.0,
 }
 
 def load_frames_config() -> dict:
@@ -283,13 +286,135 @@ def delete_key_frames(file_name):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)                                               # Se notifica del fallo y devuelve 500 INTERNAL SERVER ERROR
 
 # Función que extrae los frames posteriores a un movimiento realizado y devuelve el conjunto de todas las imágenes.
-def extract_key_frames(video_path, coords, progress_key=None):
+CONSENSUS_WINDOW = 3  # Nº de frames estables a conservar para el consenso YOLO por captura
 
+# ── Parámetros del trigger híbrido absdiff + YOLO (4 fases) ──────────────────
+# FASE 1: detector de ventanas pixel-estables vía absdiff (determinista, barato).
+# FASE 2: votación YOLO de N sondeos consecutivos dentro de la ventana estable.
+# FASE 3: filtros de plausibilidad física (rango de diff de un movimiento legal).
+# FASE 4: validación de legalidad con python-chess sobre tablero oficial.
+#
+# Por qué híbrido: YOLO sobre PyTorch+CUDA no es determinista. Si se usa como
+# trigger temporal, su ruido (subset de piezas detectadas varía entre runs) se
+# convierte en falsos keyframes. absdiff sobre frames consecutivos es totalmente
+# determinista y aísla los instantes en que el tablero está físicamente quieto;
+# allí YOLO opera en su régimen más estable y la votación 2/3 elimina las
+# piezas marginales que son el origen del ruido entre runs.
+
+# FASE 1 — trigger absdiff (sobre el WARPED 1000×1000 con blur)
+# Sin zona neutra: ratio < MOTION ⇒ estable (incrementa stable_run);
+# ratio ≥ MOTION ⇒ movimiento (resetea stable_run).
+ABSDIFF_BIN_THRESHOLD   = 15      # umbral de binarización por pixel
+MOTION_PIXEL_RATIO      = 0.003   # > 0.3% píxeles cambiados → movimiento real
+STABLE_FRAMES_REQUIRED  = 5       # frames consecutivos estables antes de votar
+COOLDOWN_AFTER_CAPTURE  = 50      # frames de bloqueo tras captura (~2s @25fps)
+
+# FASE 2 — votación multi-shot YOLO
+YOLO_VOTING_SHOTS       = 3       # inferencias YOLO por candidato
+YOLO_VOTE_MIN_AGREE     = 2       # votos mínimos por casilla para aceptar pieza
+
+# FASE 3 — sanity check mínimo (solo excluye d==0)
+# YOLO detecta ~50% de piezas con subconjunto variable entre scans; cualquier
+# umbral máximo aquí genera falsos rechazos. El filtro real es Phase 4.
+REAL_MOVE_DIFF_MIN      = 1
+REAL_MOVE_DIFF_MAX      = 999   # sin límite superior efectivo
+
+# FASE 4 — validación legal
+USE_LEGAL_MOVE_VALIDATION = True
+LEGAL_MOVE_TOLERANCE      = 2     # errores tolerados sobre el DELTA de casillas
+                                  # cambiadas (no sobre el tablero completo).
+                                  # Un movimiento simple cambia 2 casillas →
+                                  # toleramos hasta 2 de ellas mal clasificadas.
+MIN_PIECES_TRUST          = 8     # estados con menos piezas → mano u oclusión
+
+# -----------------------------------------
+# Parámetros de auto-calibración del ruido base del vídeo (usados solo en fallback absdiff)
+# -----------------------------------------
+# La fase de calibración muestrea los primeros segundos del vídeo (sin movimiento
+# de piezas) para medir el diff base de la cámara y ajustar los umbrales
+# proporcionalmente al ruido real del clip.
+#
+# CALIB_SKIP_SECONDS: segundos iniciales a saltar (evita el arranque con mano/piezas)
+# CALIB_SAMPLE_SECONDS: cuántos segundos muestrear para calcular el ruido base
+# NOISE_MULT_START: threshold_start   = p25_ruido × NOISE_MULT_START  (cap: 30× config)
+# NOISE_MULT_END:   threshold_end     = p25_ruido × NOISE_MULT_END    (cap: 30× config)
+# NOISE_MULT_REF:   min_change_from_ref = p25_ruido × NOISE_MULT_REF  (cap: 30× config)
+CALIB_SKIP_SECONDS   = 3
+CALIB_SAMPLE_SECONDS = 10
+NOISE_MULT_START     = 20.0
+NOISE_MULT_END       = 10.0
+NOISE_MULT_REF       = 40.0
+
+
+def _calibrate_noise_floor(video, mat, pixel_binary: int) -> dict:
+    """
+    Muestrea los primeros CALIB_SAMPLE_SECONDS del vídeo (tras saltar
+    CALIB_SKIP_SECONDS) para calcular el ruido base de la cámara.
+
+    Devuelve un dict con estadísticas del diff estable: mean, p50, p75, p95.
+    El cursor del vídeo queda reposicionado en el frame 0 al finalizar.
+    Devuelve {} si el vídeo es demasiado corto o si falla la lectura.
+    """
+    fps   = video.get(cv2.CAP_PROP_FPS) or 30.0
+    total = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    skip = min(int(CALIB_SKIP_SECONDS  * fps), total // 5)
+    samp = min(int(CALIB_SAMPLE_SECONDS * fps), total // 5)
+
+    if samp < 5:   # Vídeo demasiado corto para calibrar
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        return {}
+
+    for _ in range(skip):
+        video.read()
+
+    diffs: list[float] = []
+    prev_blur = None
+    for _ in range(samp):
+        ret, frame = video.read()
+        if not ret:
+            break
+        warped = cv2.warpPerspective(frame, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+        blur   = process_image(warped)
+        if prev_blur is not None:
+            d = cv2.absdiff(prev_blur, blur)
+            _, t = cv2.threshold(d, pixel_binary, 255, cv2.THRESH_BINARY)
+            diffs.append(float(np.sum(t > 0)))
+        prev_blur = blur
+
+    video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    if not diffs:
+        return {}
+
+    arr = np.array(diffs)
+    # p25 en vez de p75: en vídeos con juego activo desde el inicio, p75 incluye
+    # frames de movimiento real y sobreestima el ruido base. p25 captura la
+    # parte tranquila de la distribución (tablero quieto entre jugadas).
+    return {
+        'mean': float(arr.mean()),
+        'p25':  float(np.percentile(arr, 25)),
+        'p75':  float(np.percentile(arr, 75)),
+        'p95':  float(np.percentile(arr, 95)),
+    }
+
+
+def _extract_key_frames_absdiff(video_path, coords, progress_key=None):
+    """
+    Trigger clásico por diferencia de píxeles (absdiff). Se usa como fallback
+    cuando YOLO no está disponible. No llamar directamente — usar extract_key_frames.
+    Retorna la 5-tupla original: (key_frames, key_frames_orig, groups, orig_groups, mat).
+    """
     # Variables de la función
     key_frames = []                 # Lista de los frames claves (warpeados)
     key_frames_orig = []            # Lista de los frames claves (originales sin warpear)
+    key_frames_groups = []          # Lista de grupos de frames estables (warpeados) para consenso
+    key_frames_orig_groups = []     # Lista de grupos de frames estables (originales) para consenso
     frames_since_motion = 0         # Frames consecutivos de estabilidad desde el último movimiento
     motion_detected = False         # Indica si actualmente se está detectando un movimiento
+    stable_win_warped = deque(maxlen=CONSENSUS_WINDOW)   # Ventana deslizante de frames estables
+    stable_win_orig   = deque(maxlen=CONSENSUS_WINDOW)
+    last_yolo_piece_count = None    # Nº de piezas detectadas en el último keyframe validado
 
     # ── Umbrales (cargados desde media/frames_config.json o defaults) ──────────
     cfg                 = load_frames_config()
@@ -301,17 +426,44 @@ def extract_key_frames(video_path, coords, progress_key=None):
     ref_pixel_binary    = cfg["REF_PIXEL_BINARY"]
     log_interval        = cfg["LOG_INTERVAL"]
     cooldown_frames     = cfg["COOLDOWN_FRAMES"]
+    noise_mult_start    = float(cfg.get("NOISE_MULT_START", NOISE_MULT_START))
+    noise_mult_end      = float(cfg.get("NOISE_MULT_END",   NOISE_MULT_END))
+    noise_mult_ref      = float(cfg.get("NOISE_MULT_REF",   NOISE_MULT_REF))
     frame_count         = 0         # Contador de frames procesados
     cooldown_remaining  = 0         # Frames restantes de cooldown tras la última captura
+
+    mat   = get_matriz(coords)
+    video = open_video(video_path)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) or 1           # Total de frames para el progreso
+
+    # ── Auto-calibración: ajustar umbrales al ruido real del clip ────────────
+    # Se usa p25 (no p75) porque p75 se contamina con frames de movimiento real
+    # cuando el juego está en marcha durante los primeros segundos del clip.
+    # p25 captura la parte tranquila de la distribución (tablero quieto).
+    # Safety cap: nunca superar 30× el valor de config para evitar sobreajuste.
+    noise = _calibrate_noise_floor(video, mat, pixel_binary)
+    if noise and noise['p25'] > 0:
+        p25 = noise['p25']
+        cap_start = threshold_start     * 30
+        cap_end   = threshold_end       * 30
+        cap_ref   = min_change_from_ref * 30
+        adaptive_start = min(p25 * noise_mult_start, cap_start)
+        adaptive_end   = min(p25 * noise_mult_end,   cap_end)
+        adaptive_ref   = min(p25 * noise_mult_ref,   cap_ref)
+        threshold_start     = max(threshold_start,     adaptive_start)
+        threshold_end       = max(threshold_end,       adaptive_end)
+        min_change_from_ref = max(min_change_from_ref, adaptive_ref)
+        print(f"[AUTO-CALIB] Ruido base del clip: mean={noise['mean']:.0f} "
+              f"p25={noise['p25']:.0f} p75={noise['p75']:.0f} p95={noise['p95']:.0f}")
+        print(f"[AUTO-CALIB] Umbrales adaptativos → "
+              f"start={threshold_start:.0f} end={threshold_end:.0f} ref={min_change_from_ref:.0f}")
+    else:
+        print("[AUTO-CALIB] Calibración omitida (vídeo muy corto o lectura fallida)")
 
     print(f"[CONFIG] Parámetros de captura: pixel_binary={pixel_binary} "
           f"start={threshold_start} end={threshold_end} "
           f"stability={stability_frames} min_ref={min_change_from_ref} "
           f"ref_binary={ref_pixel_binary} cooldown={cooldown_frames}")
-
-    mat   = get_matriz(coords)
-    video = open_video(video_path)
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) or 1           # Total de frames para el progreso
     ret, frame_ref = video.read()                                           # Obtención del primer frame
 
     if not ret:
@@ -352,6 +504,8 @@ def extract_key_frames(video_path, coords, progress_key=None):
             if consec_area > threshold_start:                               # Inicio de movimiento detectado
                 motion_detected     = True
                 frames_since_motion = 0
+                stable_win_warped.clear()
+                stable_win_orig.clear()
                 print(f"[FRAMES] Movimiento iniciado en frame {frame_count} (consec_area={consec_area})")
             else:
                 # Actualización gradual del frame de referencia para compensar cambios de iluminación
@@ -360,8 +514,12 @@ def extract_key_frames(video_path, coords, progress_key=None):
         else:                                                               # Durante el movimiento
             if consec_area < threshold_end:
                 frames_since_motion += 1                                    # Frame estable: incrementar contador
+                stable_win_warped.append(frame_curr_warped.copy())
+                stable_win_orig.append(frame_curr.copy())
             else:
                 frames_since_motion = 0                                     # Movimiento aún activo: reiniciar
+                stable_win_warped.clear()
+                stable_win_orig.clear()
 
             if frames_since_motion >= stability_frames:                     # Tablero estabilizado tras el movimiento
                 # Confirmar movimiento real comparando contra la última posición estable de referencia
@@ -372,24 +530,581 @@ def extract_key_frames(video_path, coords, progress_key=None):
                 if ref_area > min_change_from_ref:
                     if _hand_in_frame(frame_curr):
                         frames_since_motion = 0
+                        stable_win_warped.clear()
+                        stable_win_orig.clear()
                         print(f"[FRAMES] Mano detectada en frame {frame_count}, esperando retirada")
                     else:
-                        key_frames.append(frame_curr_warped.copy())
-                        key_frames_orig.append(frame_curr.copy())
-                        blur_ref = blur_curr.copy()
-                        cooldown_remaining = cooldown_frames
-                        motion_detected = False
-                        frames_since_motion = 0
-                        print(f"[FRAMES] Frame clave #{len(key_frames)} guardado (ref_area={ref_area}) → cooldown {cooldown_frames} frames")
+                        # ── Validación YOLO: rechaza falsos positivos obvios ──────
+                        # Un cambio real mueve exactamente 1 pieza (delta en piezas ∈ {0, 1}).
+                        # Si YOLO ve 2+ piezas más que en el último keyframe válido,
+                        # el tablero no cambió realmente (duplicado o falsa alarma tardía).
+                        _accept_frame = True
+                        try:
+                            from .chess_detector import detect_board_state as _ds_val, is_available as _ia_val
+                            if _ia_val():
+                                quick_state = _ds_val(frame_curr_warped)
+                                if quick_state is not None:
+                                    curr_count = len(quick_state)
+                                    if last_yolo_piece_count is not None:
+                                        delta = last_yolo_piece_count - curr_count
+                                        if delta < -2:
+                                            # YOLO ve 3+ piezas más → casi seguro es un duplicado
+                                            _accept_frame = False
+                                            print(f"[FRAMES] Candidato rechazado por YOLO "
+                                                  f"(ref_area={ref_area}, δpiezas={delta:+d}, "
+                                                  f"antes={last_yolo_piece_count} ahora={curr_count})")
+                                        else:
+                                            last_yolo_piece_count = curr_count
+                                    else:
+                                        last_yolo_piece_count = curr_count
+                        except Exception as _e_val:
+                            logger.debug("[FRAMES] Validación YOLO fallida: %s", _e_val)
+
+                        if _accept_frame:
+                            warp_group = list(stable_win_warped) or [frame_curr_warped.copy()]
+                            orig_group = list(stable_win_orig)   or [frame_curr.copy()]
+                            key_frames.append(warp_group[-1])
+                            key_frames_orig.append(orig_group[-1])
+                            key_frames_groups.append(warp_group)
+                            key_frames_orig_groups.append(orig_group)
+                            blur_ref = blur_curr.copy()
+                            cooldown_remaining = cooldown_frames
+                            motion_detected = False
+                            frames_since_motion = 0
+                            stable_win_warped.clear()
+                            stable_win_orig.clear()
+                            print(f"[FRAMES] Frame clave #{len(key_frames)} guardado "
+                                  f"(ref_area={ref_area}, consensus_frames={len(warp_group)}) "
+                                  f"→ cooldown {cooldown_frames} frames")
+                        else:
+                            frames_since_motion = 0
+                            stable_win_warped.clear()
+                            stable_win_orig.clear()
                 else:
                     print(f"[FRAMES] Movimiento ignorado como falsa alarma (ref_area={ref_area})")
                     motion_detected     = False
                     frames_since_motion = 0
+                    stable_win_warped.clear()
+                    stable_win_orig.clear()
 
         blur_prev = blur_curr
 
     video.release()
-    return key_frames, key_frames_orig, mat
+    return key_frames, key_frames_orig, key_frames_groups, key_frames_orig_groups, mat
+
+
+def _diff_states(canonical, yolo):
+    """
+    Diff ASIMÉTRICO: solo contradicciones de YOLO contra el estado canónico.
+
+    No penaliza omisiones (casillas donde el canónico tiene pieza pero YOLO no
+    la ve), porque YOLO típicamente detecta solo ~50% de las piezas en cada
+    inferencia y eso inflaría el diff con falsa señal.
+
+    Cuenta únicamente casillas donde YOLO afirma una pieza que contradice al
+    estado canónico (pieza distinta o pieza donde el canónico dice vacía).
+    """
+    if canonical is None or yolo is None:
+        return 99
+    return sum(
+        1 for sq, sym in yolo.items()
+        if canonical.get(sq, '') != sym
+    )
+
+
+def _vote_per_square(states, min_votes):
+    """
+    Agrega N estados YOLO en uno robusto vía votación por casilla.
+    Para cada casilla, devuelve la pieza con >= min_votes coincidencias.
+    Las casillas sin consenso quedan vacías → ruido marginal filtrado.
+    """
+    valid = [s for s in states if s]
+    if not valid:
+        return {}
+    all_squares = set()
+    for s in valid:
+        all_squares.update(s.keys())
+    out = {}
+    for sq in all_squares:
+        votes = Counter(s.get(sq) for s in valid)
+        sym, n = votes.most_common(1)[0]
+        if sym is not None and n >= min_votes:
+            out[sq] = sym
+    return out
+
+
+def _pixel_changed_squares(prev_warped, curr_warped, top_k=6, threshold=5):
+    """
+    Identifica los chess.Square con mayor diferencia de píxeles entre dos
+    frames warpeados usando la MISMA grid Hough que detect_board_state.
+
+    La diferencia con get_changed_cells es fundamental: get_changed_cells usa
+    la grid UNIFORME de 125px por celda, que puede no coincidir con las
+    líneas reales del tablero. Si la homografía coloca el tablero ligeramente
+    desplazado respecto al grid uniforme, las casillas se asignan erróneamente
+    (off-by-one). Usando la grid Hough (que detecta las líneas reales) ambas
+    funciones (pixel-diff y YOLO) operan en el mismo sistema de casillas.
+    """
+    from .chess_detector import _grid_for_frame
+
+    col_bounds, row_bounds = _grid_for_frame(curr_warped)
+
+    gray_prev = cv2.cvtColor(prev_warped, cv2.COLOR_BGR2GRAY) if len(prev_warped.shape) == 3 else prev_warped
+    gray_curr = cv2.cvtColor(curr_warped, cv2.COLOR_BGR2GRAY) if len(curr_warped.shape) == 3 else curr_warped
+
+    cell_diffs = []
+    for file_idx in range(8):
+        r0 = row_bounds[file_idx]
+        r1 = row_bounds[file_idx + 1]
+        for rank_idx in range(8):
+            c0 = col_bounds[rank_idx]
+            c1 = col_bounds[rank_idx + 1]
+            if r1 <= r0 or c1 <= c0:
+                cell_diffs.append((chess.square(file_idx, rank_idx), 0.0))
+                continue
+            cb = gray_prev[r0:r1, c0:c1].astype(np.float32)
+            ca = gray_curr[r0:r1, c0:c1].astype(np.float32)
+            diff = float(np.mean(np.abs(
+                (ca - np.mean(ca)) - (cb - np.mean(cb))
+            )))
+            cell_diffs.append((chess.square(file_idx, rank_idx), diff))
+
+    if not cell_diffs:
+        return set()
+
+    # Compensar variaciones globales de iluminación (mismo método que get_changed_cells)
+    diffs_only = [d for _, d in cell_diffs]
+    median_diff = float(np.median(diffs_only))
+
+    significant = [(sq, d - median_diff) for sq, d in cell_diffs if d - median_diff > threshold]
+    significant.sort(key=lambda x: x[1], reverse=True)
+    return {sq for sq, _ in significant[:top_k]}
+
+
+def _move_changed_squares(legal_board, move):
+    """
+    Devuelve el conjunto de casillas (chess.Square) que el move cambia
+    físicamente: origen, destino, peón capturado al paso, y casillas de
+    torre en enroque.
+    """
+    squares = {move.from_square, move.to_square}
+
+    if legal_board.is_castling(move):
+        rank = chess.square_rank(move.from_square)
+        if chess.square_file(move.to_square) == 6:   # enroque corto
+            squares.add(chess.square(7, rank))       # torre origen (h)
+            squares.add(chess.square(5, rank))       # torre destino (f)
+        else:                                         # enroque largo
+            squares.add(chess.square(0, rank))       # torre origen (a)
+            squares.add(chess.square(3, rank))       # torre destino (d)
+
+    elif legal_board.is_en_passant(move):
+        # El peón capturado está en la misma fila que el atacante antes del move
+        if legal_board.turn == chess.WHITE:
+            squares.add(move.to_square - 8)
+        else:
+            squares.add(move.to_square + 8)
+
+    return squares
+
+
+def _match_state_change_to_legal_move(
+    legal_board, prev_warped, curr_warped, robust_state, prev_robust=None,
+):
+    """
+    Phase 4: identifica el movimiento legal usando el DELTA DEL ESTADO YOLO
+    como señal primaria, no el pixel-diff.
+
+    Por qué YOLO state delta y no pixel-diff:
+      - YOLO opera sobre el frame ORIGINAL lateral, detecta el bbox de cada
+        pieza, toma su BASE POINT y lo proyecta vía M al warped. La base
+        está en el plano del tablero por lo que la proyección es exacta:
+        YOLO mapea correctamente cada pieza a su casilla.
+      - Pixel-diff sobre el warped es INHERENTEMENTE ERRÓNEO en vista lateral:
+        la homografía solo es exacta para el plano del tablero, pero el
+        cuerpo de las piezas (sobre el plano) se estira hacia las casillas
+        adyacentes en el warp. Resultado: pixel-diff identifica casillas
+        equivocadas off-by-one.
+      - Por tanto, el delta del state YOLO (qué piezas aparecen/desaparecen
+        entre scans) es la fuente fiable de "qué casillas cambiaron".
+      - El pixel-diff se mantiene como confirmación SECUNDARIA de bajo peso.
+
+    Score por movimiento (signals YOLO con peso ALTO):
+        +2.0  pieza movida desapareció del origen  (prev='P', now='')
+        +2.0  pieza esperada apareció en destino   (prev='', now='P')
+        -1.5  pieza movida sigue en origen          (move no ocurrió)
+        -1.5  pieza distinta en destino              (move incompatible)
+        +0.3  pixel-diff confirma cada casilla esperada (peso bajo)
+        +0.1  captura (tiebreaker)
+
+    Aceptación: best >= ACCEPT_THRESHOLD (1.5) y margin >= MARGIN (0.5).
+    """
+    from .chess_detector import _board_to_state
+
+    ACCEPT_THRESHOLD = 1.5     # al menos una señal YOLO fuerte
+    MARGIN_REQUIRED  = 0.5
+
+    if prev_robust is None:
+        return None
+
+    # Pixel-diff sobre Hough grid (señal secundaria)
+    pixel_changed = set()
+    if prev_warped is not None and curr_warped is not None:
+        pixel_changed = _pixel_changed_squares(
+            prev_warped, curr_warped, top_k=8, threshold=5
+        )
+
+    candidates = []   # list[(neg_score, move, expected_state)]
+    for move in legal_board.legal_moves:
+        legal_board.push(move)
+        expected = _board_to_state(legal_board)
+        legal_board.pop()
+
+        # Pieza que se mueve y posible captura (estado ANTES del move)
+        moving_piece   = legal_board.piece_at(move.from_square)
+        moving_sym     = moving_piece.symbol() if moving_piece else ''
+        captured_piece = legal_board.piece_at(move.to_square)
+        captured_sym   = captured_piece.symbol() if captured_piece else ''
+
+        # Lo que YOLO veía/ve en origen y destino
+        prev_orig = prev_robust.get(move.from_square, '')
+        now_orig  = robust_state.get(move.from_square, '')
+        prev_dest = prev_robust.get(move.to_square, '')
+        now_dest  = robust_state.get(move.to_square, '')
+        expected_dest = expected.get(move.to_square, '')
+
+        score = 0.0
+
+        # === Señal PRIMARIA 1: ¿desapareció la pieza del origen? ===
+        if prev_orig == moving_sym and moving_sym and not now_orig:
+            score += 2.0    # FUERTE: estaba ahí, ya no está
+        elif prev_orig == moving_sym and now_orig == moving_sym:
+            score -= 1.5    # CONTRADICCIÓN: la pieza sigue en origen
+
+        # === Señal PRIMARIA 2: ¿apareció la pieza esperada en destino? ===
+        if not prev_dest and now_dest and now_dest == expected_dest:
+            score += 2.0    # FUERTE: destino vacío → ahora con pieza esperada
+        elif prev_dest == captured_sym and captured_sym and now_dest == expected_dest:
+            score += 2.0    # FUERTE: captura confirmada
+        elif now_dest and now_dest != expected_dest:
+            # YOLO ve algo distinto a lo esperado en destino — pero solo
+            # penalizar si lo que ve es una pieza ENEMIGA (puede ser ruido)
+            score -= 1.5
+
+        # === Señal SECUNDARIA: pixel-diff (peso bajo) ===
+        expected_sqs = _move_changed_squares(legal_board, move)
+        if pixel_changed:
+            pixel_overlap = len(pixel_changed & expected_sqs)
+            score += 0.3 * pixel_overlap
+
+        # Tiebreaker leve para capturas
+        if legal_board.is_capture(move):
+            score += 0.1
+
+        candidates.append((-score, move, expected))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda c: c[0])
+    best_neg, best_move, best_state = candidates[0]
+    best_score = -best_neg
+    second_score = -candidates[1][0] if len(candidates) > 1 else float('-inf')
+    margin = best_score - second_score
+
+    # Top-3 SANs para diagnóstico
+    top_alts = []
+    for neg, mv, _ in candidates[:3]:
+        try:
+            san = legal_board.san(mv)
+        except Exception:
+            san = mv.uci()
+        top_alts.append((san, -neg))
+
+    if best_score < ACCEPT_THRESHOLD:
+        return None
+    if margin < MARGIN_REQUIRED:
+        return None
+
+    expected_sqs_best = _move_changed_squares(legal_board, best_move)
+    err = max(0, len(expected_sqs_best) - len(pixel_changed & expected_sqs_best))
+
+    return (best_move, best_state, err, top_alts)
+
+
+def extract_key_frames(video_path, coords, progress_key=None):
+    """
+    Extrae frames clave usando un pipeline híbrido en 4 fases:
+
+      FASE 1 — Trigger temporal por absdiff: detecta ventanas pixel-estables.
+                Determinista, barato, inmune al no-determinismo de YOLO.
+      FASE 2 — Lectura semántica con votación multi-shot: YOLO se invoca
+                YOLO_VOTING_SHOTS veces dentro de la ventana estable y se
+                vota por casilla (>=YOLO_VOTE_MIN_AGREE coincidencias).
+      FASE 3 — Plausibilidad física: solo se aceptan diffs en el rango
+                físico de un movimiento legal (REAL_MOVE_DIFF_MIN..MAX).
+      FASE 4 — Validación legal con python-chess: el cambio observado debe
+                corresponder a un movimiento legal sobre el tablero oficial.
+                La referencia (last_stable_state) se actualiza al estado
+                CANÓNICO post-jugada, NO a la salida YOLO → la referencia
+                nunca se contamina con ruido del detector.
+
+    Retorna (key_frames, key_frames_orig, detected_states, mat, accepted_moves).
+    Si YOLO no está disponible, delega en _extract_key_frames_absdiff.
+    """
+    from .chess_detector import (
+        detect_board_state, is_available, _board_to_state,
+        invalidate_grid_cache, reset_square_beliefs,
+        calibrate_yolo_offset, reset_yolo_offset,
+    )
+
+    mat   = get_matriz(coords)
+    video = open_video(video_path)
+
+    if isinstance(video, dict):
+        return video
+
+    if not is_available():
+        print("[TRIGGER] YOLO no disponible — fallback a detección por absdiff")
+        video.release()
+        result = _extract_key_frames_absdiff(video_path, coords, progress_key)
+        if isinstance(result, dict):
+            return result
+        kf, kf_orig, *_, m = result
+        return kf, kf_orig, [], m, []
+
+    # ── Inicialización ────────────────────────────────────────────────────────
+    invalidate_grid_cache()
+    reset_square_beliefs()
+    reset_yolo_offset()
+
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    fps          = video.get(cv2.CAP_PROP_FPS) or 30.0
+
+    key_frames      = []
+    key_frames_orig = []
+    detected_states = []
+    accepted_moves: list[chess.Move] = []   # moves elegidos por Phase 4 (motor A)
+
+    # Tablero oficial: solo para validación legal (Phase 4), NUNCA comparado
+    # directamente con YOLO (YOLO detecta ~50% piezas, mismatch ≥ 9 vs canónico).
+    legal_board = chess.Board()
+
+    # Referencia YOLO: estado robusto del último keyframe aceptado.
+    # None → todavía no hay referencia; el primer ventana estable lo inicializa
+    # sin añadir keyframe (bootstrap de la posición inicial vista por YOLO).
+    last_robust_state = None     # dict | None
+    last_accepted_warped = None  # imagen warpeada del último keyframe aceptado
+                                 # (referencia para Phase 4 pixel-diff)
+
+    # FASE 1: estado del detector absdiff
+    gray_prev   = None
+    stable_run  = 0
+    cooldown    = 0
+    seen_motion_since_capture = True   # bootstrap: aceptar la 1ª jugada
+
+    # FASE 2: buffer de candidatos durante la ventana estable
+    voting_buffer = []  # list[(warped, frame_orig)]
+
+    frame_idx = 0
+    accepted  = 0
+    rejected_range  = 0
+    rejected_legal  = 0
+    rejected_pieces = 0
+
+    print(f"[TRIGGER] Pipeline híbrido — absdiff(stable≥{STABLE_FRAMES_REQUIRED}f) "
+          f"+ YOLO×{YOLO_VOTING_SHOTS}-vote + diff∈[{REAL_MOVE_DIFF_MIN},{REAL_MOVE_DIFF_MAX}] "
+          f"+ legalidad={USE_LEGAL_MOVE_VALIDATION} (fps={fps:.1f})")
+
+    while video.isOpened():
+        ret, frame = video.read()
+        if not ret:
+            break
+
+        frame_idx += 1
+        if progress_key:
+            set_progress(progress_key, int(frame_idx / total_frames * 50))
+
+        # Warpeo + blur sobre el dominio del tablero — ignora el fondo ruidoso
+        warped     = cv2.warpPerspective(frame, mat, (NORMALIZED_SIZE, NORMALIZED_SIZE))
+        gray_board = process_image(warped)
+
+        if gray_prev is None:
+            gray_prev = gray_board
+            continue
+
+        # ── FASE 1: clasificación pixel del frame (sobre warped) ─────────────
+        diff_pixels = cv2.absdiff(gray_board, gray_prev)
+        _, mask     = cv2.threshold(diff_pixels, ABSDIFF_BIN_THRESHOLD, 255, cv2.THRESH_BINARY)
+        ratio       = float(np.count_nonzero(mask)) / mask.size
+        gray_prev   = gray_board
+
+        # Log periódico de diagnóstico
+        if frame_idx % 60 == 0:
+            print(f"[FASE1] frame={frame_idx} ratio={ratio:.5f} "
+                  f"stable_run={stable_run} cooldown={cooldown} "
+                  f"buf={len(voting_buffer)} kf={len(key_frames)}")
+
+        # Cooldown post-captura: solo registramos si hubo movimiento
+        if cooldown > 0:
+            cooldown -= 1
+            if ratio > MOTION_PIXEL_RATIO:
+                seen_motion_since_capture = True
+            continue
+
+        # Movimiento real → resetea cualquier ventana estable en curso
+        if ratio > MOTION_PIXEL_RATIO:
+            stable_run = 0
+            seen_motion_since_capture = True
+            voting_buffer.clear()
+            continue
+
+        # Frame pixel-estable (ratio ≤ MOTION_PIXEL_RATIO)
+        stable_run += 1
+
+        if stable_run < STABLE_FRAMES_REQUIRED or not seen_motion_since_capture:
+            continue
+
+        # ── FASE 2: ventana estable alcanzada — recolectar shots y votar ─────
+        voting_buffer.append((warped, frame.copy()))
+
+        if len(voting_buffer) < YOLO_VOTING_SHOTS:
+            continue
+
+        # YOLO sobre el frame ORIGINAL (no warpeado): el modelo fue entrenado
+        # en perspectiva natural; el cenital deforma piezas altas y dispara
+        # falsas contradicciones. M proyecta el punto base al espacio 1000×1000.
+        states = [detect_board_state(w, original_frame=o, M=mat)
+                  for w, o in voting_buffer]
+        robust = _vote_per_square(states, YOLO_VOTE_MIN_AGREE)
+        warped_chosen, frame_chosen = voting_buffer[-1]
+        voting_buffer.clear()
+
+        if len(robust) < MIN_PIECES_TRUST:
+            rejected_pieces += 1
+            print(f"[TRIGGER] Estado robusto pobre ({len(robust)} piezas) "
+                  f"frame {frame_idx} — descartado")
+            stable_run = 0
+            continue
+
+        # ── Bootstrap: primera ventana estable = posición inicial vista por YOLO ──
+        if last_robust_state is None:
+            # Auto-calibrar el offset YOLO usando la posición inicial estándar.
+            # Compensa el sesgo sistemático del bbox (la base se reporta
+            # más arriba de donde la pieza realmente toca el tablero).
+            calibrate_yolo_offset(warped_chosen, frame_chosen, mat)
+
+            # Re-ejecutar la votación con el offset ya aplicado para que
+            # last_robust_state quede correcto desde el inicio.
+            states_post = [detect_board_state(w, original_frame=o, M=mat)
+                           for w, o in [(warped_chosen, frame_chosen)] * YOLO_VOTING_SHOTS]
+            robust = _vote_per_square(states_post, YOLO_VOTE_MIN_AGREE) or robust
+
+            last_robust_state = robust
+            last_accepted_warped = warped_chosen.copy()
+            print(f"[TRIGGER] Estado inicial YOLO capturado "
+                  f"({len(robust)} piezas) frame {frame_idx} — sin keyframe")
+            stable_run = 0
+            seen_motion_since_capture = False
+            continue
+
+        # ── FASE 3: sanity check (siempre actualizar referencia) ──────────────
+        # Guardamos el estado anterior ANTES de actualizar la referencia para
+        # medir la delta real entre scans consecutivos.
+        # La referencia se actualiza en CADA votación (tanto si se acepta como
+        # si se rechaza): así el diff siempre mide la última ventana, no el
+        # acumulado de toda la partida desde el bootstrap.
+        prev_robust       = last_robust_state
+        last_robust_state = robust            # actualizar SIEMPRE aquí
+
+        d = _diff_states(prev_robust, robust)
+
+        if d == 0:
+            # Misma detección que el scan anterior → sin movimiento, ignorar
+            stable_run = 0
+            continue
+
+        # Sanity check: límites muy amplios, el filtro real es Phase 4
+        if not (REAL_MOVE_DIFF_MIN <= d <= REAL_MOVE_DIFF_MAX):
+            rejected_range += 1
+            print(f"[TRIGGER] Diff fuera de rango ({d}) frame {frame_idx} — "
+                  f"descartado [piezas_yolo={len(robust)}]")
+            stable_run = 0
+            continue
+
+        if _hand_in_frame(frame_chosen):
+            print(f"[TRIGGER] Mano visible frame {frame_idx} — esperando retirada")
+            stable_run = 0
+            continue
+
+        # ── FASE 4: validación legal por PIXEL-DIFF + python-chess ────────────
+        move = None
+        if USE_LEGAL_MOVE_VALIDATION:
+            match = _match_state_change_to_legal_move(
+                legal_board,
+                prev_warped=last_accepted_warped,
+                curr_warped=warped_chosen,
+                robust_state=robust,
+                prev_robust=prev_robust,
+            )
+            if match is None:
+                rejected_legal += 1
+                print(f"[TRIGGER] Sin movimiento legal compatible (d_yolo={d}) "
+                      f"frame {frame_idx} — descartado [piezas_yolo={len(robust)}]")
+                stable_run = 0
+                continue
+            move, expected_state, err, top_alts = match
+            try:
+                move_san = legal_board.san(move)
+            except Exception:
+                move_san = move.uci()
+            best_score = top_alts[0][1]
+            alts_str = ", ".join(f"{san}({s:.2f})" for san, s in top_alts[1:])
+            legal_board.push(move)
+            accepted += 1
+            print(f"[TRIGGER] ✓ Keyframe #{len(key_frames)+1} confirmado "
+                  f"(frame {frame_idx}, move={move_san} [{move.uci()}], "
+                  f"score={best_score:.2f}, err={err}, "
+                  f"piezas_yolo={len(robust)}, alts=[{alts_str}])")
+        else:
+            accepted += 1
+            print(f"[TRIGGER] ✓ Keyframe #{len(key_frames)+1} confirmado "
+                  f"(frame {frame_idx}, d={d}, piezas={len(robust)}) [sin val. legal]")
+
+        # Deduplicación: descartar si el delta YOLO vs el último keyframe aceptado
+        # es 0 (mismo estado visual → duplicado capturado antes del cooldown).
+        if key_frames and _diff_states(detected_states[-1], last_robust_state) == 0:
+            rejected_range += 1
+            # Si ya hicimos push del move, hay que deshacerlo para no corromper
+            # el legal_board: el keyframe se descarta pero el move ya estaba
+            # registrado por _match_state_change_to_legal_move.
+            if move is not None and legal_board.move_stack and legal_board.move_stack[-1] == move:
+                legal_board.pop()
+            print(f"[TRIGGER] Duplicado descartado frame {frame_idx} "
+                  f"(mismo estado que keyframe #{len(key_frames)})")
+            stable_run = 0
+            continue
+
+        # Confirmar keyframe (incluyendo el move escogido por Phase 4)
+        key_frames.append(warped_chosen)
+        key_frames_orig.append(frame_chosen)
+        detected_states.append(last_robust_state)
+        accepted_moves.append(move)   # None si USE_LEGAL_MOVE_VALIDATION=False
+
+        # Actualizar referencia pixel-diff para Phase 4 del próximo keyframe
+        last_accepted_warped = warped_chosen.copy()
+
+        cooldown   = COOLDOWN_AFTER_CAPTURE
+        stable_run = 0
+        seen_motion_since_capture = False
+
+    video.release()
+    print(f"[TRIGGER] Extracción completada: {len(key_frames)} keyframes — "
+          f"aceptados={accepted}, rechazados[rango={rejected_range}, "
+          f"legal={rejected_legal}, piezas={rejected_pieces}], "
+          f"frames totales={frame_idx}")
+    return key_frames, key_frames_orig, detected_states, mat, accepted_moves
+
 
 # -----------------------------------------
 # Utilidad de debug: guardado de imágenes de diagnóstico
@@ -1376,34 +2091,44 @@ def consensus_analysis(stock, obsidian, plenty, fen):
 # Generación de FENs con YOLOv8 (detección de estado absoluto)
 # -----------------------------------------
 
-def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=None, original_frames=None, M=None):
+def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=None,
+                        original_frames=None, M=None,
+                        detected_states=None, accepted_moves=None,
+                        key_frames_groups=None, key_frames_orig_groups=None):
     """
     Versión YOLOv8 de frames_to_fens.
 
-    Diferencia clave respecto a la versión original (detección por deltas):
-      - Cada frame es analizado de forma INDEPENDIENTE por YOLO, obteniendo
-        el estado completo del tablero (qué pieza hay en cada casilla).
-      - El movimiento se infiere comparando dos estados absolutos consecutivos,
-        no comparando diferencias de píxeles.
-      - Un error de detección en un frame NO se propaga al siguiente.
+    Cuando se proporciona `detected_states` (lista de BoardState, una por keyframe),
+    los estados pre-calculados por extract_key_frames se reutilizan directamente,
+    evitando re-ejecutar YOLO sobre los mismos frames. Solo se ejecuta YOLO una vez
+    más para el frame inicial (all_frames[0]).
 
-    Si el modelo YOLOv8 no está disponible, cae automáticamente en la función
-    original frames_to_fens (detección por deltas).
+    Sin `detected_states` (modo legado o fallback absdiff), ejecuta YOLO en cada
+    frame como antes (compatible con el comportamiento anterior).
+
+    Si YOLO no está disponible, cae automáticamente en frames_to_fens (deltas).
 
     Parámetros:
-      all_frames[0]  → posición inicial (antes de cualquier movimiento)
-      all_frames[i]  → posición después del movimiento i
-
-    Retorna lista de FENs con len(all_frames) elementos.
+      all_frames[0]    → posición inicial (antes de cualquier movimiento)
+      all_frames[i]    → posición después del movimiento i
+      detected_states  → [state_kf0, state_kf1, ...] estados de all_frames[1:]
     """
-    from .chess_detector import is_available, detect_board_state, infer_move_from_states, invalidate_grid_cache
+    from .chess_detector import (
+        is_available, detect_board_state, detect_board_state_consensus,
+        infer_move_from_states, invalidate_grid_cache, reset_square_beliefs,
+    )
 
     if not is_available():
         logger.info("[FEN-YOLO] Modelo YOLO no disponible — usando detección por deltas")
         return frames_to_fens(all_frames, initial_fen, progress_key)
 
-    # Limpiar cuadrícula cacheada y contador de debug de análisis anteriores
+    # ── Inicialización ────────────────────────────────────────────────────────
+    # Solo invalidar caché y creencias si vamos a ejecutar YOLO de nuevo
+    # (si detected_states cubre todos los keyframes, YOLO solo corre 1 vez)
     invalidate_grid_cache()
+    if not detected_states:
+        # Modo sin estados pre-calculados: YOLO corre en cada frame → resetear Bayes
+        reset_square_beliefs()
     from . import chess_detector as _cd
     _cd._yolo_debug_counter = 0
 
@@ -1416,7 +2141,11 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
                 except Exception:
                     pass
 
-    logger.info("[FEN-YOLO] Usando YOLOv8 para detección de estado absoluto")
+    if detected_states:
+        logger.info("[FEN-YOLO] Usando %d estados pre-calculados (YOLO ya ejecutado en extracción)",
+                    len(detected_states))
+    else:
+        logger.info("[FEN-YOLO] Ejecutando YOLO en cada frame (modo sin estados pre-calculados)")
 
     if initial_fen is None:
         initial_fen = chess.STARTING_FEN
@@ -1428,6 +2157,47 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
 
     total_steps = max(1, len(all_frames) - 1)
 
+    # Estado del frame inicial: calculado una sola vez aquí
+    # all_frames[0] = initial_frame, no tiene entrada en detected_states
+    _initial_state_cache = None
+
+    def _get_state(idx):
+        """
+        Devuelve el BoardState para all_frames[idx].
+
+        Si detected_states está disponible:
+          idx=0 → frame inicial → YOLO (una sola vez, cacheado)
+          idx>0 → detected_states[idx-1] (pre-calculado en extracción)
+
+        Sin detected_states: sigue la lógica legada de grupos/YOLO.
+        """
+        nonlocal _initial_state_cache
+
+        if detected_states:
+            if idx == 0:
+                # Frame inicial: ejecutar YOLO una sola vez
+                if _initial_state_cache is None:
+                    orig_0 = original_frames[0] if original_frames else None
+                    _initial_state_cache = detect_board_state(
+                        all_frames[0], original_frame=orig_0, M=M
+                    )
+                return _initial_state_cache
+            else:
+                ds_idx = idx - 1
+                if ds_idx < len(detected_states):
+                    return detected_states[ds_idx]
+                # Fuera de rango → fallback YOLO
+                orig = original_frames[idx] if original_frames else None
+                return detect_board_state(all_frames[idx], original_frame=orig, M=M)
+
+        # ── Modo legado: grupos de consenso o YOLO directo ────────────────────
+        orig = original_frames[idx] if original_frames else None
+        if key_frames_groups and idx > 0 and (idx - 1) < len(key_frames_groups):
+            wg = key_frames_groups[idx - 1]
+            og = key_frames_orig_groups[idx - 1] if key_frames_orig_groups else None
+            return detect_board_state_consensus(wg, og, M)
+        return detect_board_state(all_frames[idx], original_frame=orig, M=M)
+
     for i in range(total_steps):
         if progress_key:
             set_progress(progress_key, 50 + int(i / total_steps * 50))
@@ -1436,36 +2206,62 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
         frame_b = all_frames[i + 1]
 
         try:
-            # ── Detección YOLO de estado absoluto en ambos frames ─────────────
-            orig_a = original_frames[i]     if original_frames else None
-            orig_b = original_frames[i + 1] if original_frames else None
-            state_before = detect_board_state(frame_a, original_frame=orig_a, M=M)
-            state_after  = detect_board_state(frame_b, original_frame=orig_b, M=M)
+            # ── Camino rápido: usar el move ya validado por Phase 4 ─────────
+            # Phase 4 (en extract_key_frames) ya seleccionó el movimiento legal
+            # que mejor explica el delta YOLO observado. Si está disponible y
+            # sigue siendo legal sobre el board actual, lo aplicamos directamente
+            # sin re-inferir. Esto elimina la divergencia entre los dos motores
+            # de inferencia y la corrupción del FEN base por inferencias erróneas.
+            move = None
+            move_source = None
+            if accepted_moves and i < len(accepted_moves) and accepted_moves[i] is not None:
+                cand = accepted_moves[i]
+                if cand in board.legal_moves:
+                    move = cand
+                    move_source = "phase4"
+                else:
+                    logger.warning(
+                        "[FEN-YOLO] Move pre-validado %s ya no es legal en posición "
+                        "actual — fallback a inferencia", cand.uci()
+                    )
 
-            if state_before is None or state_after is None:
-                # Modelo no disponible en tiempo de ejecución → fallback por deltas
-                logger.warning("[FEN-YOLO] detect_board_state devolvió None, usando fallback delta")
-                changed_delta = get_changed_cells(frame_a, frame_b)
-                squares_delta = [cell_index_to_square(idx) for idx in changed_delta]
-                move = detect_move_from_squares(
-                    board, squares_delta,
-                    frame_before=frame_a, frame_after=frame_b,
-                    changed_indices=changed_delta,
-                )
-            else:
-                # ── Inferencia de movimiento a partir de los dos estados ──────
-                move = infer_move_from_states(board, state_before, state_after)
+            # Solo si Phase 4 no nos dio move (o es ilegal) recurrimos a la
+            # inferencia clásica como fallback.
+            if move is None:
+                state_before = _get_state(i)
+                state_after  = _get_state(i + 1)
 
-                # Si YOLO falla en este par, intentar con deltas como segunda oportunidad
-                if move is None:
-                    logger.debug("[FEN-YOLO] Inferencia YOLO sin resultado, reintentando con deltas")
-                    changed_delta = get_changed_cells(frame_a, frame_b)
-                    squares_delta = [cell_index_to_square(idx) for idx in changed_delta]
+                # NO se enriquece state_before con legal_fill: la asimetría
+                # (state_before completo, state_after parcial) genera 13+ piezas
+                # "fantasma desaparecidas" que dominan la inferencia y producen
+                # moves incorrectos. Comprobado experimentalmente.
+
+                changed_cells = get_changed_cells(frame_a, frame_b)
+                flow_sq = {cell_index_to_square(idx) for idx in changed_cells}
+
+                if state_before is None or state_after is None:
+                    logger.warning("[FEN-YOLO] Estado None — usando fallback delta")
+                    squares_delta = [cell_index_to_square(idx) for idx in changed_cells]
                     move = detect_move_from_squares(
                         board, squares_delta,
                         frame_before=frame_a, frame_after=frame_b,
-                        changed_indices=changed_delta,
+                        changed_indices=changed_cells,
                     )
+                    move_source = "delta"
+                else:
+                    move = infer_move_from_states(
+                        board, state_before, state_after, flow_squares=flow_sq
+                    )
+                    move_source = "infer_states"
+                    if move is None:
+                        logger.debug("[FEN-YOLO] YOLO sin resultado → fallback deltas")
+                        squares_delta = [cell_index_to_square(idx) for idx in changed_cells]
+                        move = detect_move_from_squares(
+                            board, squares_delta,
+                            frame_before=frame_a, frame_after=frame_b,
+                            changed_indices=changed_cells,
+                        )
+                        move_source = "delta"
 
             if move:
                 san = board.san(move)
@@ -1474,19 +2270,16 @@ def frames_to_fens_yolo(all_frames, initial_fen=None, progress_key=None, on_fen=
                 if on_fen:
                     on_fen(board.fen(), len(fens) - 1)
                 consecutive_failures = 0
-                logger.info("[FEN-YOLO] ✓ Movimiento detectado: %s (%s)", san, move.uci())
+                logger.info("[FEN-YOLO] ✓ %s (%s) [src=%s]", san, move.uci(), move_source)
             else:
                 fens.append(board.fen())
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_FAILURES:
                     logger.warning(
-                        "[FEN-YOLO] %d fallos consecutivos — revisa media/debug/frame_pair_*.jpg",
-                        consecutive_failures,
+                        "[FEN-YOLO] %d fallos consecutivos", consecutive_failures
                     )
                 else:
-                    logger.debug("[FEN-YOLO] No se pudo determinar movimiento (fallo #%d)", consecutive_failures)
-
-                # Guardar debug del par problemático
+                    logger.debug("[FEN-YOLO] Sin movimiento (fallo #%d)", consecutive_failures)
                 _save_frame_pair_debug(i, frame_a, frame_b, [])
 
         except Exception as exc:

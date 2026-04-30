@@ -1,4 +1,8 @@
+import contextlib
+import datetime
+import io
 import json
+import logging
 import os
 import shutil
 import threading
@@ -32,6 +36,70 @@ fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_fr
 # Tiempo de vida de los resultados en caché (1 hora)
 CACHE_TTL = 3600
 
+_LOGS_DIR = os.path.join(settings.MEDIA_ROOT, 'debug', 'logs')
+
+
+class _TeeStream(io.TextIOBase):
+    """Escribe simultáneamente en un fichero y en el stream original."""
+    def __init__(self, file_stream, original_stream):
+        self._file = file_stream
+        self._orig = original_stream
+
+    def write(self, s):
+        self._file.write(s)
+        self._file.flush()
+        if self._orig:
+            self._orig.write(s)
+        return len(s)
+
+    def flush(self):
+        self._file.flush()
+        if self._orig:
+            self._orig.flush()
+
+
+@contextlib.contextmanager
+def _capture_session_log(task_id: str, file_name: str):
+    """
+    Context manager que redirige print() y los loggers de 'games.*'
+    a un fichero .txt en media/debug/logs/ durante el análisis.
+    Devuelve la ruta del log al salir.
+    """
+    os.makedirs(_LOGS_DIR, exist_ok=True)
+    ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_path = os.path.join(_LOGS_DIR, f'analysis_{ts}_{task_id[:8]}_{os.path.splitext(file_name)[0]}.txt')
+
+    import sys
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    with open(log_path, 'w', encoding='utf-8') as log_file:
+        log_file.write(f"=== Sesión de análisis ===\n")
+        log_file.write(f"Fecha   : {datetime.datetime.now().isoformat()}\n")
+        log_file.write(f"Vídeo   : {file_name}\n")
+        log_file.write(f"Task ID : {task_id}\n")
+        log_file.write("=" * 60 + "\n\n")
+
+        tee = _TeeStream(log_file, original_stdout)
+
+        # Handler de logging que escribe en el mismo fichero
+        file_handler = logging.FileHandler(log_path, mode='a', encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter('[%(name)s] %(levelname)s: %(message)s'))
+
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+
+        sys.stdout = tee
+        sys.stderr = tee
+        try:
+            yield log_path
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            root_logger.removeHandler(file_handler)
+            file_handler.close()
+            log_file.write(f"\n\n=== Fin de sesión: {datetime.datetime.now().isoformat()} ===\n")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tarea de análisis en segundo plano
@@ -52,6 +120,13 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
       0–50  → extracción de frames clave (extract_key_frames)
       50–100 → generación de FENs (frames_to_fens_yolo)
     """
+    with _capture_session_log(task_id, file_name) as log_path:
+        print(f"[SESSION] Log guardado en: {log_path}")
+        _run_analysis_core(task_id, file_name, video_path, corners_raw, analysis_id)
+
+
+def _run_analysis_core(task_id: str, file_name: str, video_path: str,
+                       corners_raw, analysis_id: str):
     import numpy as np
 
     def _update(pct: int, **extra):
@@ -83,7 +158,9 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
         if isinstance(result, dict) and result.get('error'):
             raise ValueError(f"Extracción de frames fallida: {result['error']}")
 
-        key_frames, key_frames_orig, mat = result
+        # Nueva interfaz: 5-tupla con los moves ya validados por Phase 4
+        # (key_frames, key_frames_orig, detected_states, mat, accepted_moves)
+        key_frames, key_frames_orig, detected_states, mat, accepted_moves = result
 
         if not key_frames:
             raise ValueError("No se detectaron movimientos en el vídeo.")
@@ -93,7 +170,7 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
 
         # 6. Generar FENs con YOLOv8 (progreso 50→100) con streaming parcial
         all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
-        # Frames originales (sin warpear) para mejorar la detección YOLO
+        # Frames originales para YOLO si se necesita re-ejecutar
         all_original_frames = ([None] + key_frames_orig) if key_frames_orig else None
 
         fens_stream_key = f'analysis_task_{task_id}_fens'
@@ -114,6 +191,8 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
             on_fen=_on_fen,
             original_frames=all_original_frames,
             M=mat,
+            detected_states=detected_states,
+            accepted_moves=accepted_moves,
         )
 
         # Eliminar FENs duplicados consecutivos (frames donde no se detectó movimiento)

@@ -18,3 +18,5 @@ __pycache__/
 
 # Node
 node_modules/
+*.txt
+*.png

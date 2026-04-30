@@ -160,6 +160,20 @@ def get_model():
         return None
 
     try:
+        # Forzar determinismo en YOLO/PyTorch para reducir varianza run-a-run.
+        # cuDNN auto-tuner y reducciones FP no deterministas son la causa principal
+        # de que dos inferencias sobre la misma imagen den outputs distintos.
+        try:
+            import torch, random
+            torch.manual_seed(42)
+            np.random.seed(42)
+            random.seed(42)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark    = False
+            logger.info("[YOLO] Modo determinista activado (cudnn.deterministic=True)")
+        except Exception as _det_exc:
+            logger.warning("[YOLO] No se pudo activar modo determinista: %s", _det_exc)
+
         from ultralytics import YOLO  # Importación diferida para no fallar sin el paquete
         _model = YOLO(MODEL_PATH)
         class_names = list(_model.names.values())
@@ -197,6 +211,20 @@ def reset_model_cache() -> None:
 
 
 # ── Detección de la cuadrícula mediante líneas de Hough ──────────────────────
+
+def _grid_is_valid(boundaries: list[int], img_size: int) -> bool:
+    """
+    Comprueba que los 8 intervalos de la cuadrícula son razonablemente
+    uniformes (dentro del ±40% del espaciado esperado). Una cuadrícula
+    con casillas de tamaño muy dispar indica que Hough colocó líneas en
+    posiciones incorrectas.
+    """
+    if len(boundaries) != 9:
+        return False
+    expected = img_size / 8
+    return all(expected * 0.60 <= (boundaries[i + 1] - boundaries[i]) <= expected * 1.40
+               for i in range(8))
+
 
 def _cluster_lines(positions: list[float], n: int, img_size: int) -> list[int]:
     """
@@ -279,6 +307,15 @@ def detect_grid_from_lines(
     col_boundaries = _cluster_lines(v_pos, n_cells, img_size) if len(v_pos) >= 3 else uniform
     row_boundaries = _cluster_lines(h_pos, n_cells, img_size) if len(h_pos) >= 3 else uniform
 
+    # Validar: si los intervalos son irregulares (Hough puso líneas en mal sitio)
+    # caer al grid uniforme que es exactamente correcto para un warp 1000×1000.
+    if not _grid_is_valid(col_boundaries, img_size):
+        logger.debug("[HOUGH] col_boundaries inválido → usando uniforme")
+        col_boundaries = uniform
+    if not _grid_is_valid(row_boundaries, img_size):
+        logger.debug("[HOUGH] row_boundaries inválido → usando uniforme")
+        row_boundaries = uniform
+
     logger.debug(
         "[HOUGH] %d líneas H, %d líneas V → col=%s row=%s",
         len(h_pos), len(v_pos), col_boundaries, row_boundaries,
@@ -287,21 +324,158 @@ def detect_grid_from_lines(
 
 
 # ── Caché de cuadrícula por análisis ─────────────────────────────────────────
-# Evita recalcular Hough en cada frame de la misma partida.
-_grid_cache: dict[int, tuple[list[int], list[int]]] = {}
+# La cuadrícula se actualiza en cada frame hasta que Hough encuentre una
+# válida (bordes equidistantes ±40%). Una vez encontrada, se congela.
+# Si nunca se encuentra, se sigue usando la mejor vista hasta el momento.
+_grid_cache:       dict[int, tuple[list[int], list[int]]] = {}
+_grid_calibrated:  dict[int, bool]                        = {}
 
 
 def _grid_for_frame(warped_image: np.ndarray) -> tuple[list[int], list[int]]:
-    """Devuelve la cuadrícula Hough, usando caché basada en shape de la imagen."""
+    """
+    Devuelve la mejor cuadrícula Hough disponible para este análisis.
+
+    - Si ya hay una cuadrícula válida (bordes uniformes) en caché → devuélvela.
+    - Si no, calcula una nueva desde este frame y guárdala si es mejor o si
+      no había ninguna. Así la cuadrícula mejora frame a frame hasta que
+      Hough encuentra las líneas del tablero con buena iluminación.
+    """
     key = warped_image.shape[0]
-    if key not in _grid_cache:
-        _grid_cache[key] = detect_grid_from_lines(warped_image)
+    if _grid_calibrated.get(key, False):
+        return _grid_cache[key]
+
+    candidate = detect_grid_from_lines(warped_image)
+    col_b, row_b = candidate
+    img_size = key
+    is_valid = _grid_is_valid(col_b, img_size) and _grid_is_valid(row_b, img_size)
+
+    if key not in _grid_cache or is_valid:
+        _grid_cache[key]      = candidate
+        _grid_calibrated[key] = is_valid
+
     return _grid_cache[key]
 
 
 def invalidate_grid_cache() -> None:
     """Limpia la caché de cuadrícula (útil entre análisis distintos)."""
     _grid_cache.clear()
+    _grid_calibrated.clear()
+
+
+# ── Auto-calibración del offset YOLO en el espacio warpeado ──────────────────
+# Compensa el sesgo sistemático del bbox de YOLO: la base del bbox (y2) suele
+# quedar unos píxeles por encima de donde la pieza realmente toca el tablero
+# (las anotaciones del dataset cortan la base de la pieza). Al proyectar vía M
+# este sesgo se traduce en un offset constante en el warped, frecuentemente
+# del orden de 1 fila/columna. Calibramos una vez al inicio comparando las
+# detecciones contra la posición inicial estándar.
+_yolo_offset_x: float = 0.0
+_yolo_offset_y: float = 0.0
+
+
+def reset_yolo_offset() -> None:
+    """Restablece el offset YOLO (entre análisis distintos)."""
+    global _yolo_offset_x, _yolo_offset_y
+    _yolo_offset_x = 0.0
+    _yolo_offset_y = 0.0
+
+
+def calibrate_yolo_offset(initial_warped, original_initial, M, verbose: bool = True):
+    """
+    Detecta el sesgo sistemático entre las posiciones reportadas por
+    YOLO+M+grid y las posiciones esperadas de la posición inicial estándar.
+
+    Para cada pieza detectada, busca la casilla MÁS CERCANA del set esperado
+    (32 piezas iniciales) que coincida en TIPO. El vector de desplazamiento
+    desde la posición detectada hasta el centro de la casilla esperada es
+    el offset. Tomamos la mediana sobre todas las detecciones (robusta a
+    detecciones falsas o casillas mal mapeadas).
+
+    Una vez calibrado, detect_board_state aplica este offset a la salida de
+    cv2.perspectiveTransform para corregir el sesgo.
+    """
+    global _yolo_offset_x, _yolo_offset_y
+    _yolo_offset_x = 0.0
+    _yolo_offset_y = 0.0
+
+    model = get_model()
+    if model is None or original_initial is None or M is None:
+        return
+
+    orig_h, orig_w = original_initial.shape[:2]
+    img_small = cv2.resize(original_initial, (INFERENCE_SIZE, INFERENCE_SIZE))
+    sx = orig_w / INFERENCE_SIZE
+    sy = orig_h / INFERENCE_SIZE
+    results = model(img_small, verbose=False, conf=CONFIDENCE_THRESHOLD)[0]
+
+    col_bounds, row_bounds = _grid_for_frame(initial_warped)
+
+    initial_board = chess.Board()
+    expected = [(sq, initial_board.piece_at(sq).symbol())
+                for sq in chess.SQUARES if initial_board.piece_at(sq) is not None]
+
+    offsets = []
+    for box in results.boxes:
+        cls_id   = int(box.cls[0])
+        cls_name = model.names[cls_id]
+        piece_sym = CLASS_MAP.get(cls_name)
+        if not piece_sym:
+            neutral = _COLOR_NEUTRAL_MAP.get(cls_name)
+            if neutral:
+                # No podemos resolver el color sin saber la posición. Omitimos.
+                continue
+        if not piece_sym:
+            continue
+
+        x1, y1, x2, y2 = box.xyxy[0].tolist()
+        base_x = ((x1 + x2) / 2) * sx
+        base_y = y2 * sy
+        pt = np.array([[[base_x, base_y]]], dtype=np.float32)
+        wpt = cv2.perspectiveTransform(pt, M)[0][0]
+        wx, wy = float(wpt[0]), float(wpt[1])
+
+        if wx < -50 or wx > NORMALIZED_SIZE + 50 or wy < -50 or wy > NORMALIZED_SIZE + 50:
+            continue
+
+        # Casilla esperada más cercana del mismo tipo
+        best_sq, best_dist = None, float('inf')
+        for sq, sym in expected:
+            if sym != piece_sym:
+                continue
+            file_idx = chess.square_file(sq)
+            rank_idx = chess.square_rank(sq)
+            cy = (row_bounds[file_idx] + row_bounds[file_idx + 1]) / 2
+            cx = (col_bounds[rank_idx] + col_bounds[rank_idx + 1]) / 2
+            dist = ((wx - cx) ** 2 + (wy - cy) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_sq = sq
+
+        # Solo usar emparejamientos cercanos (descartar si la pieza está muy lejos
+        # de cualquier casilla esperada — probable detección falsa)
+        if best_sq is None or best_dist > 1.5 * (NORMALIZED_SIZE / 8):
+            continue
+
+        file_idx = chess.square_file(best_sq)
+        rank_idx = chess.square_rank(best_sq)
+        cy = (row_bounds[file_idx] + row_bounds[file_idx + 1]) / 2
+        cx = (col_bounds[rank_idx] + col_bounds[rank_idx + 1]) / 2
+        offsets.append((cx - wx, cy - wy))
+
+    if len(offsets) >= 6:
+        _yolo_offset_x = float(np.median([o[0] for o in offsets]))
+        _yolo_offset_y = float(np.median([o[1] for o in offsets]))
+        if verbose:
+            logger.info(
+                "[YOLO-CALIB] %d piezas usadas → offset dx=%+.1fpx dy=%+.1fpx",
+                len(offsets), _yolo_offset_x, _yolo_offset_y
+            )
+            print(f"[YOLO-CALIB] {len(offsets)} piezas usadas → "
+                  f"offset dx={_yolo_offset_x:+.1f}px dy={_yolo_offset_y:+.1f}px")
+    else:
+        if verbose:
+            logger.info("[YOLO-CALIB] solo %d piezas detectadas — offset sin calibrar", len(offsets))
+            print(f"[YOLO-CALIB] solo {len(offsets)} piezas — offset NO calibrado")
 
 
 # ── Detección de estado del tablero ──────────────────────────────────────────
@@ -337,6 +511,86 @@ def validate_board_state(raw: dict[int, tuple[str, float]]) -> BoardState:
         for sq, _ in detections[:limit]:
             result[sq] = sym
     return result
+
+
+# ── Bayes filter: confianza por casilla ──────────────────────────────────────
+# Acumula evidencia a lo largo de los frames de un mismo análisis.
+# _square_beliefs[square][symbol] = peso acumulado (decae con el tiempo).
+_square_beliefs: dict[int, dict[str, float]] = {}
+_BELIEF_DECAY   = 0.6   # Cuánto se preserva la creencia previa (0=olvida, 1=jamás olvida)
+_BELIEF_BOOST   = 1.0   # Peso que añade una nueva detección YOLO
+
+
+def reset_square_beliefs() -> None:
+    """Limpia el Bayes filter entre análisis distintos."""
+    _square_beliefs.clear()
+
+
+def _update_square_beliefs(raw_state: BoardState) -> None:
+    """Actualiza las creencias por casilla con una nueva detección YOLO."""
+    for sq in list(_square_beliefs.keys()):
+        for sym in list(_square_beliefs[sq].keys()):
+            _square_beliefs[sq][sym] *= _BELIEF_DECAY
+    for sq, sym in raw_state.items():
+        if sq not in _square_beliefs:
+            _square_beliefs[sq] = {}
+        _square_beliefs[sq][sym] = _square_beliefs[sq].get(sym, 0.0) + _BELIEF_BOOST
+
+
+def _apply_square_beliefs(raw_state: BoardState) -> BoardState:
+    """
+    Fusiona la detección YOLO actual con las creencias acumuladas.
+    Para casillas donde YOLO no detectó nada, añade la pieza más creíble
+    si la creencia supera el umbral. Para casillas detectadas, confirma o
+    corrige basándose en la confianza acumulada.
+    """
+    _update_square_beliefs(raw_state)
+
+    result = dict(raw_state)
+
+    # Casillas con creencia fuerte pero sin detección YOLO este frame → recuperar
+    RECOVERY_THRESHOLD = 1.8
+    for sq, beliefs in _square_beliefs.items():
+        if sq in result:
+            continue
+        best_sym = max(beliefs, key=beliefs.__getitem__)
+        if beliefs[best_sym] >= RECOVERY_THRESHOLD:
+            result[sq] = best_sym
+
+    return result
+
+
+# ── Helpers para FEN agreement scoring ───────────────────────────────────────
+
+def _board_to_state(board: chess.Board) -> BoardState:
+    """Extrae el estado completo de un chess.Board como {square: símbolo}."""
+    return {sq: board.piece_at(sq).symbol() for sq in chess.SQUARES if board.piece_at(sq)}
+
+
+def _fen_agreement_score(candidate_state: BoardState, yolo_state: BoardState) -> float:
+    """
+    Cuantifica el acuerdo entre el estado candidato (derivado de python-chess)
+    y la detección YOLO. Por cada casilla:
+      +1.0  → ambos coinciden en la pieza (o ambos vacíos, no contabilizado)
+      -0.50 → ambos ven pieza pero discrepan en tipo/color
+      -0.30 → YOLO ve pieza, candidato está vacío (falso positivo YOLO)
+      -0.15 → candidato tiene pieza, YOLO no la detecta (miss YOLO — penalización suave)
+    """
+    score = 0.0
+    all_squares = set(candidate_state.keys()) | set(yolo_state.keys())
+    for sq in all_squares:
+        c_sym = candidate_state.get(sq, '')
+        y_sym = yolo_state.get(sq, '')
+        if c_sym == y_sym:
+            score += 1.0
+        elif c_sym and y_sym:
+            score -= 0.50
+        elif y_sym:
+            score -= 0.30
+        else:
+            score -= 0.15
+    return score
+
 
 
 def detect_board_state(
@@ -396,15 +650,21 @@ def detect_board_state(
             # Proyectar al espacio warpeado (0–NORMALIZED_SIZE) con la homografía M
             pt = np.array([[[base_x, base_y]]], dtype=np.float32)
             warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
-            
+
+            # Aplicar offset de auto-calibración: compensa el sesgo sistemático
+            # del bbox de YOLO (la base se reporta unos pixeles arriba de la
+            # base real, lo que en el warped equivale a 1 fila o más).
+            wpt_x = warped_pt[0] + _yolo_offset_x
+            wpt_y = warped_pt[1] + _yolo_offset_y
+
             # IGNORAR piezas que caen fuera del tablero físico (ej. tablero digital en el vídeo)
             # Margen de 50px por si la base asoma ligeramente del borde de la casilla
-            if warped_pt[0] < -50 or warped_pt[0] > NORMALIZED_SIZE + 50 or \
-               warped_pt[1] < -50 or warped_pt[1] > NORMALIZED_SIZE + 50:
+            if wpt_x < -50 or wpt_x > NORMALIZED_SIZE + 50 or \
+               wpt_y < -50 or wpt_y > NORMALIZED_SIZE + 50:
                 continue
 
-            x_center = float(np.clip(warped_pt[0], 0, NORMALIZED_SIZE))
-            y_center = float(np.clip(warped_pt[1], 0, NORMALIZED_SIZE))
+            x_center = float(np.clip(wpt_x, 0, NORMALIZED_SIZE))
+            y_center = float(np.clip(wpt_y, 0, NORMALIZED_SIZE))
         else:
             x_center = ((x1 + x2) / 2) * scale_factor
             y_center = ((y1 + y2) / 2) * scale_factor
@@ -433,6 +693,7 @@ def detect_board_state(
             raw[square] = (piece, conf)
 
     board_state = validate_board_state(raw)
+    board_state = _apply_square_beliefs(board_state)
 
     logger.debug(
         "[YOLO] %d piezas detectadas (%s): %s",
@@ -454,14 +715,17 @@ def detect_board_state(
                 by = y2 * sy
                 pt = np.array([[[bx, by]]], dtype=np.float32)
                 wpt = cv2.perspectiveTransform(pt, M)[0][0]
-                
+                # Aplicar offset de auto-calibración (igual que en la detección)
+                wx_adj = wpt[0] + _yolo_offset_x
+                wy_adj = wpt[1] + _yolo_offset_y
+
                 # Ignorar también en la visualización de debug
-                if wpt[0] < -50 or wpt[0] > NORMALIZED_SIZE + 50 or \
-                   wpt[1] < -50 or wpt[1] > NORMALIZED_SIZE + 50:
+                if wx_adj < -50 or wx_adj > NORMALIZED_SIZE + 50 or \
+                   wy_adj < -50 or wy_adj > NORMALIZED_SIZE + 50:
                     continue
 
-                wx = float(np.clip(wpt[0], 0, NORMALIZED_SIZE))
-                wy = float(np.clip(wpt[1], 0, NORMALIZED_SIZE))
+                wx = float(np.clip(wx_adj, 0, NORMALIZED_SIZE))
+                wy = float(np.clip(wy_adj, 0, NORMALIZED_SIZE))
                 col_d = max(0, min(bisect.bisect_right(col_bounds, wx) - 1, 7))
                 row_d = max(0, min(bisect.bisect_right(row_bounds, wy) - 1, 7))
             else:
@@ -481,6 +745,57 @@ def detect_board_state(
         pass
 
     return board_state
+
+
+def detect_board_state_consensus(
+    warped_frames: list,
+    original_frames: Optional[list] = None,
+    M: Optional[np.ndarray] = None,
+    min_vote_ratio: float = 0.5,
+) -> Optional[BoardState]:
+    """
+    Ejecuta detect_board_state sobre N frames estables consecutivos y devuelve
+    el estado consensuado: una pieza se incluye sólo si aparece en al menos
+    min_vote_ratio de las detecciones válidas.
+
+    Reduce errores aleatorios de YOLO al requerir consistencia entre frames.
+    Si todos los frames fallan (modelo no disponible), devuelve None.
+    """
+    if not warped_frames:
+        return None
+
+    n = len(warped_frames)
+    if original_frames is None:
+        original_frames = [None] * n
+
+    votes: dict[int, dict[str, int]] = {}
+    valid_detections = 0
+
+    for warped, orig in zip(warped_frames, original_frames):
+        state = detect_board_state(warped, orig, M)
+        if state is None:
+            continue
+        valid_detections += 1
+        for sq, sym in state.items():
+            if sq not in votes:
+                votes[sq] = {}
+            votes[sq][sym] = votes[sq].get(sym, 0) + 1
+
+    if valid_detections == 0:
+        return None
+
+    threshold = max(1, round(valid_detections * min_vote_ratio))
+    result: BoardState = {}
+    for sq, sym_counts in votes.items():
+        best_sym = max(sym_counts, key=sym_counts.__getitem__)
+        if sym_counts[best_sym] >= threshold:
+            result[sq] = best_sym
+
+    logger.debug(
+        "[YOLO-CONSENSUS] %d/%d frames válidos → %d piezas consensuadas (threshold=%d)",
+        valid_detections, n, len(result), threshold,
+    )
+    return result if result else None
 
 
 # ── Conversión de estado → FEN ────────────────────────────────────────────────
@@ -529,17 +844,19 @@ def infer_move_from_states(
     board: chess.Board,
     state_before: BoardState,
     state_after: BoardState,
+    flow_squares: Optional[set] = None,
 ) -> Optional[chess.Move]:
     """
     Dadas las posiciones antes y después detectadas por YOLO, deduce el
     movimiento legal de python-chess que mejor explica la transición.
 
-    Estrategia en 3 niveles:
-      1. Exacto: identifica casillas fuente (pieza desapareció) y destino
-         (pieza apareció/cambió), busca movimiento legal from→to exacto.
-      2. Enroque: comprueba solapamiento con las 4 casillas implicadas.
-      3. Fallback por solapamiento máximo: útil cuando la detección es
-         imprecisa y algunas casillas no se detectan correctamente.
+    Estrategia en 4 niveles:
+      1. Exacto: identifica casillas fuente/destino; si hay varios candidatos,
+         usa FEN agreement scoring para elegir el mejor.
+      2. Enroque: solapamiento con las 4 casillas implicadas.
+      3. Solapamiento máximo (fallback rápido).
+      4. FEN agreement scoring sobre todos los movimientos legales, con bonus
+         por casillas con flujo óptico significativo (flow_squares).
     """
     all_squares = set(state_before.keys()) | set(state_after.keys())
 
@@ -583,26 +900,37 @@ def infer_move_from_states(
         [chess.square_name(s) for s in dests],
     )
 
-    # ── Nivel 1: movimiento exacto ───────────────────────────────────────────
-    if sources and dests:
-        for move in board.legal_moves:
-            if move.from_square in sources and move.to_square in dests:
-                return move
-
-    # ── Nivel 2: enroque (4 casillas implicadas) ─────────────────────────────
     castling_extras: dict[int, set[int]] = {
         chess.G1: {chess.H1, chess.F1},
         chess.C1: {chess.A1, chess.D1},
         chess.G8: {chess.H8, chess.F8},
         chess.C8: {chess.A8, chess.D8},
     }
+
+    # ── Nivel 1: movimiento exacto con FEN scoring para desempate ────────────
+    if sources and dests:
+        candidates_1 = [
+            move for move in board.legal_moves
+            if move.from_square in sources and move.to_square in dests
+        ]
+        if len(candidates_1) == 1:
+            return candidates_1[0]
+        elif len(candidates_1) > 1:
+            best = max(
+                candidates_1,
+                key=lambda m: _fen_agreement_score(_board_to_state(_push_copy(board, m)), state_after),
+            )
+            logger.debug("[YOLO] Nivel 1 desempate FEN: %s", best)
+            return best
+
+    # ── Nivel 2: enroque (4 casillas implicadas) ─────────────────────────────
     for move in board.legal_moves:
         if board.is_castling(move):
             involved = {move.from_square, move.to_square} | castling_extras.get(move.to_square, set())
             if len(involved & changed) >= 3:
                 return move
 
-    # ── Nivel 3: máximo solapamiento (fallback) ──────────────────────────────
+    # ── Nivel 3: máximo solapamiento ─────────────────────────────────────────
     best_move, best_overlap = None, 0
     for move in board.legal_moves:
         involved = {move.from_square, move.to_square}
@@ -613,7 +941,36 @@ def infer_move_from_states(
             best_overlap, best_move = overlap, move
 
     if best_overlap >= 2:
-        logger.debug("[YOLO] Movimiento por solapamiento: %s (overlap=%d)", best_move, best_overlap)
+        logger.debug("[YOLO] Nivel 3 solapamiento: %s (overlap=%d)", best_move, best_overlap)
         return best_move
 
+    # ── Nivel 4: FEN agreement scoring sobre todos los movimientos legales ────
+    # Se activa cuando los niveles anteriores no encontraron candidato (YOLO
+    # detectó estado pero las casillas cambiadas no coinciden con ningún
+    # movimiento legal exacto). El flujo óptico bonus (+0.5) desempata entre
+    # movimientos con puntuación similar.
+    if len(state_after) >= 4:    # Solo si YOLO detectó suficientes piezas
+        best_fen_move, best_fen_score = None, -float('inf')
+        for move in board.legal_moves:
+            candidate = _board_to_state(_push_copy(board, move))
+            score = _fen_agreement_score(candidate, state_after)
+            if flow_squares and (move.from_square in flow_squares or move.to_square in flow_squares):
+                score += 0.5
+            if score > best_fen_score:
+                best_fen_score, best_fen_move = score, move
+        if best_fen_move is not None:
+            logger.debug(
+                "[YOLO] Nivel 4 FEN-scoring: %s (score=%.2f, flow=%s)",
+                best_fen_move, best_fen_score,
+                bool(flow_squares and (best_fen_move.from_square in flow_squares or best_fen_move.to_square in flow_squares)),
+            )
+            return best_fen_move
+
     return None
+
+
+def _push_copy(board: chess.Board, move: chess.Move) -> chess.Board:
+    """Devuelve una copia del tablero con el movimiento aplicado."""
+    b = board.copy()
+    b.push(move)
+    return b
