@@ -77,13 +77,13 @@ function CustomDrawerContent(props: any) {
         />
 
         <DrawerItem
-          label={t.drawer.recordVideo}
+          label={t.drawer.analyzePosition}
           icon={({ color, size }) => (
-            <FontAwesome name="camera" size={size} color={color} />
+            <FontAwesome name="search" size={size} color={color} />
           )}
           onPress={() => {
             props.navigation.closeDrawer();
-            router.push('/(drawer)/(tabs)/camera');
+            router.push('/(drawer)/(tabs)/analyze-position');
           }}
           activeTintColor={colors.primary}
           activeBackgroundColor={colors.primaryLight}

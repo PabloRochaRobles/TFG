@@ -82,10 +82,12 @@ type Phase = 'analyzing' | 'done' | 'error';
 export default function AnalysisScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const { file, corners: cornersParam } = useLocalSearchParams<{ file: string; corners?: string }>();
+  const { file, corners: cornersParam, fen: fenParam } = useLocalSearchParams<{ file?: string; corners?: string; fen?: string }>();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
   const t = useTranslation();
+
+  const isFenMode = !!fenParam && !file;
 
   const [phase, setPhase] = useState<Phase>('analyzing');
   const [totalFrames, setTotalFrames] = useState<number>(0);
@@ -132,8 +134,47 @@ export default function AnalysisScreen() {
   const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
   useEffect(() => {
-    if (file) runAnalysis();
-  }, [file]);
+    if (fenParam) runFenAnalysis(fenParam);
+    else if (file) runAnalysis();
+  }, [file, fenParam]);
+
+  const runFenAnalysis = (fen: string) => {
+    setPhase('analyzing');
+    setCurrentMove(0);
+    setAnalysisProgress(10);
+    setFens([]);
+    setEngineAnalysis([]);
+    setAnalysisId(null);
+    fensRef.current        = [];
+    engineRef.current      = [];
+    pendingQueueRef.current = [];
+    activeCountRef.current  = 0;
+
+    setAnalysisProgress(50);
+    analysisChain([fen], 5)
+      .then((results) => {
+        const posAnalysis = results[0];
+        if (!posAnalysis) {
+          setPhase('error');
+          return;
+        }
+        const validSteps = (posAnalysis.chain ?? []).filter((s) => s.engines != null);
+        if (validSteps.length === 0) {
+          setPhase('error');
+          return;
+        }
+        const positions = [fen, ...validSteps.map((s) => s.fen_after)];
+        const repeated  = positions.map(() => posAnalysis);
+        fensRef.current   = positions;
+        engineRef.current = repeated;
+        setFens(positions);
+        setEngineAnalysis(repeated);
+        setTotalFrames(positions.length - 1);
+        setAnalysisProgress(100);
+        setPhase('done');
+      })
+      .catch(() => setPhase('error'));
+  };
 
   const runAnalysis = () => {
     setPhase('analyzing');
@@ -149,7 +190,7 @@ export default function AnalysisScreen() {
     const corners = cornersParam ? (JSON.parse(cornersParam) as [number, number][]) : undefined;
 
     disconnectWsRef.current = analyzeVideoWithProgress(
-      file as string,
+      file!,
       corners,
       (pct) => setAnalysisProgress(pct),
       async (analisisId, detectedFens) => {
@@ -183,7 +224,7 @@ export default function AnalysisScreen() {
         }
 
         const lastGameData: LastGameData = {
-          file:       file as string,
+          file:       file!,
           analysisId: analisisId,
           moves:      detectedFens.length > 0 ? detectedFens.length - 1 : 0,
           date:       new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -193,7 +234,7 @@ export default function AnalysisScreen() {
         AsyncStorage.getItem('analyzedVideos')
           .then((raw) => {
             const map: Record<string, string> = raw ? JSON.parse(raw) : {};
-            map[file as string] = analisisId;
+            map[file!] = analisisId;
             return AsyncStorage.setItem('analyzedVideos', JSON.stringify(map));
           })
           .catch(() => {});
@@ -232,7 +273,9 @@ export default function AnalysisScreen() {
           >
             <Ionicons name="menu" size={30} color={colors.headerText} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.analysis.title}</Text>
+          <Text style={[styles.headerTitle, { color: colors.headerText }]}>
+            {isFenMode ? t.analysis.titleFen : t.analysis.title}
+          </Text>
           <TouchableOpacity style={styles.closeButton} onPress={() => router.back()}>
             <Ionicons name="close" size={30} color={colors.headerText} />
           </TouchableOpacity>
@@ -242,11 +285,19 @@ export default function AnalysisScreen() {
           style={[styles.scrollView, { backgroundColor: colors.background }]}
           contentContainerStyle={styles.content}
         >
-          {/* Nombre del fichero */}
+          {/* Nombre del fichero o FEN de origen */}
           <View style={[styles.fileInfo, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Ionicons name="film-outline" size={18} color={colors.textSecondary} />
-            <Text style={[styles.fileName, { color: colors.textSecondary }]} numberOfLines={1}>
-              {file ?? t.analysis.noFile}
+            <Ionicons
+              name={isFenMode ? 'code-slash-outline' : 'film-outline'}
+              size={18}
+              color={colors.textSecondary}
+            />
+            <Text
+              style={[styles.fileName, { color: colors.textSecondary }]}
+              numberOfLines={2}
+              ellipsizeMode="tail"
+            >
+              {isFenMode ? `${t.analysis.fenLabel} ${fenParam}` : (file ?? t.analysis.noFile)}
             </Text>
           </View>
 
@@ -254,9 +305,13 @@ export default function AnalysisScreen() {
           {phase === 'analyzing' && (
             <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
               <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.analyzing}</Text>
+              <Text style={[styles.statusTitle, { color: colors.text }]}>
+                {isFenMode ? t.analysis.analyzingFen : t.analysis.analyzing}
+              </Text>
               <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                {analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens}
+                {isFenMode
+                  ? t.analysis.computingFenChain
+                  : (analysisProgress < 50 ? t.analysis.extracting : t.analysis.generatingFens)}
               </Text>
               <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
                 <View style={[styles.progressFill, { backgroundColor: colors.primary, flex: analysisProgress }]} />
@@ -272,11 +327,11 @@ export default function AnalysisScreen() {
               <Ionicons name="alert-circle-outline" size={52} color="#ef4444" />
               <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.error}</Text>
               <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                {t.analysis.processingError}
+                {isFenMode ? t.analysis.processingErrorFen : t.analysis.processingError}
               </Text>
               <TouchableOpacity
                 style={[styles.retryButton, { backgroundColor: colors.buttonBg }]}
-                onPress={runAnalysis}
+                onPress={() => (isFenMode ? runFenAnalysis(fenParam!) : runAnalysis())}
               >
                 <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>{t.analysis.retry}</Text>
               </TouchableOpacity>
@@ -296,7 +351,7 @@ export default function AnalysisScreen() {
                   <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t.analysis.positionsDetected}</Text>
                   <Text style={[styles.statValue, { color: colors.primary }]}>{totalFrames}</Text>
                 </View>
-                {analysisId && (
+                {!isFenMode && analysisId && (
                   <TouchableOpacity style={styles.statRow} onPress={copyAnalysisId}>
                     <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t.analysis.analysisId}</Text>
                     <Text

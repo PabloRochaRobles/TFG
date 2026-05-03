@@ -211,7 +211,7 @@ export default function UploadScreen() {
 
   const navigation = useNavigation();
   const router = useRouter();
-  const { cameraUri, preloaded } = useLocalSearchParams<{ cameraUri?: string; preloaded?: string }>();
+  const { preloaded } = useLocalSearchParams<{ preloaded?: string }>();
 
   // Ref para saber si la pantalla se abrió desde la librería con un vídeo ya subido
   const preloadedRef = useRef<string | null>(null);
@@ -221,15 +221,6 @@ export default function UploadScreen() {
   const t = useTranslation();
 
   const player = useVideoPlayer('', (p) => { p.loop = true; });
-
-  useEffect(() => {
-    if (cameraUri) {
-      setVideoUri(cameraUri);
-      setVideoFileName('grabacion.mp4');
-      setSavedFileName(null);
-      setPhase('idle');
-    }
-  }, [cameraUri]);
 
   // Cuando se llega desde la librería con un vídeo ya subido, saltar directo a calibración
   useEffect(() => {

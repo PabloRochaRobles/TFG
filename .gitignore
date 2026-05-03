@@ -1,4 +1,3 @@
-*.mp4
 /misc/
 /media/
 /chessapp-back/misc
@@ -20,3 +19,4 @@ __pycache__/
 node_modules/
 *.txt
 *.png
+*.mp4
