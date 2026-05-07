@@ -35,6 +35,12 @@
           "backgroundColor": "#F0D9B5"
         }
       ],
+      [
+        "expo-camera",
+        {
+          "recordAudioPermission": "Allow ChessVision to record audio for video analysis"
+        }
+      ],
       "expo-video"
     ],
     "experiments": {

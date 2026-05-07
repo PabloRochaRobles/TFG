@@ -25,10 +25,20 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
+.eslintcache
 
-# macOS
+# tests
+coverage/
+
+# OS artifacts
 .DS_Store
 *.pem
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
 
 # local env files
 .env*.local

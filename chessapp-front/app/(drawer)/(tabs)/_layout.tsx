@@ -54,6 +54,17 @@ export default function TabLayout() {
         }}
       />
 
+      {/* Botón para ir a Grabar vídeo (cámara) */}
+      <Tabs.Screen
+        name="camera"
+        options={{
+          title: t.tabs.camera,
+          tabBarIcon: ({ color }) => (
+            <FontAwesome name="camera" size={28} color={color} />
+          ),
+        }}
+      />
+
       {/* Botón para ir a Analizar Posición FEN */}
       <Tabs.Screen
         name="analyze-position"

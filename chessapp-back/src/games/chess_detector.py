@@ -644,27 +644,30 @@ def detect_board_state(
         x1, y1, x2, y2 = box.xyxy[0].tolist()
 
         if use_original:
-            # Punto base: centro inferior del bbox = donde la pieza apoya en el tablero
-            base_x = ((x1 + x2) / 2) * sx
-            base_y = y2 * sy
-            # Proyectar al espacio warpeado (0–NORMALIZED_SIZE) con la homografía M
-            pt = np.array([[[base_x, base_y]]], dtype=np.float32)
-            warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
+            # Punto base: intentar primero con el centro inferior del bbox
+            # (donde la pieza toca el tablero), y si cae fuera del tablero usar
+            # el centro del bbox como fallback (útil para piezas en bordes del frame).
+            base_x_raw = ((x1 + x2) / 2) * sx
+            # Candidatos de base_y: 100% bottom, 85% bottom / 15% top (near-bottom), 50% center
+            base_y_candidates = [y2 * sy, (y1 * 0.15 + y2 * 0.85) * sy, ((y1 + y2) / 2) * sy]
 
-            # Aplicar offset de auto-calibración: compensa el sesgo sistemático
-            # del bbox de YOLO (la base se reporta unos pixeles arriba de la
-            # base real, lo que en el warped equivale a 1 fila o más).
-            wpt_x = warped_pt[0] + _yolo_offset_x
-            wpt_y = warped_pt[1] + _yolo_offset_y
+            x_center = y_center = None
+            for base_y_candidate in base_y_candidates:
+                pt = np.array([[[base_x_raw, base_y_candidate]]], dtype=np.float32)
+                warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
+                wpt_x = warped_pt[0] + _yolo_offset_x
+                wpt_y = warped_pt[1] + _yolo_offset_y
 
-            # IGNORAR piezas que caen fuera del tablero físico (ej. tablero digital en el vídeo)
-            # Margen de 50px por si la base asoma ligeramente del borde de la casilla
-            if wpt_x < -50 or wpt_x > NORMALIZED_SIZE + 50 or \
-               wpt_y < -50 or wpt_y > NORMALIZED_SIZE + 50:
-                continue
+                if wpt_x < -50 or wpt_x > NORMALIZED_SIZE + 50 or \
+                   wpt_y < -50 or wpt_y > NORMALIZED_SIZE + 50:
+                    continue  # fuera del tablero, probar siguiente candidato
 
-            x_center = float(np.clip(wpt_x, 0, NORMALIZED_SIZE))
-            y_center = float(np.clip(wpt_y, 0, NORMALIZED_SIZE))
+                x_center = float(np.clip(wpt_x, 0, NORMALIZED_SIZE))
+                y_center = float(np.clip(wpt_y, 0, NORMALIZED_SIZE))
+                break  # primer candidato válido dentro del tablero
+
+            if x_center is None:
+                continue  # ningún candidato cae dentro del tablero → ignorar
         else:
             x_center = ((x1 + x2) / 2) * scale_factor
             y_center = ((y1 + y2) / 2) * scale_factor
@@ -675,8 +678,8 @@ def detect_board_state(
             neutral = _COLOR_NEUTRAL_MAP.get(cls_name)
             if neutral:
                 white_sym, black_sym = neutral
-                # Mitad superior → negras, mitad inferior → blancas (en espacio warpeado)
-                piece = white_sym if y_center >= (NORMALIZED_SIZE / 2) else black_sym
+                # x_center < 500 -> Blancas (ranks 1 y 2). x_center >= 500 -> Negras.
+                piece = white_sym if x_center < (NORMALIZED_SIZE / 2) else black_sym
         if not piece:
             continue
 
@@ -737,7 +740,10 @@ def detect_board_state(
             cv2.rectangle(debug_img, (x1, y1), (x2, y2), color, 2)
             cv2.putText(debug_img, f"{piece_d}@{sq_name} {conf:.2f}",
                         (x1, max(y1 - 4, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-        from .services import save_debug_image
+        try:
+            from .services import save_debug_image
+        except ImportError:
+            from services import save_debug_image
         global _yolo_debug_counter
         save_debug_image(f"yolo_detect_{_yolo_debug_counter:04d}", debug_img)
         _yolo_debug_counter += 1
@@ -974,3 +980,170 @@ def _push_copy(board: chess.Board, move: chess.Move) -> chess.Board:
     b = board.copy()
     b.push(move)
     return b
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLASIFICADOR DE CELDAS (alternativa al detector YOLO+proyección)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Funciona sobre la imagen WARPEADA 1000×1000 directamente:
+#   1. Corta las 64 celdas de 125×125 px.
+#   2. Clasifica cada celda con un MobileNetV2 entrenado con
+#      generate_training_data.py + train_cell_classifier.py.
+#   3. Devuelve {chess.Square → símbolo_FEN}, igual que detect_board_state.
+#
+# Ventaja: no hay proyección de perspectiva → no hay error de casilla adyacente.
+# Para activarlo: asegúrate de que CELL_MODEL_PATH apunta al .pt entrenado.
+# ══════════════════════════════════════════════════════════════════════════════
+
+CELL_MODEL_PATH: str = getattr(
+    settings,
+    'CHESS_CELL_MODEL_PATH',
+    os.path.join(settings.MEDIA_ROOT, 'models', 'cell_classifier.pt'),
+)
+
+_cell_model             = None
+_cell_model_attempted   = False
+_cell_class_names: list = []
+_cell_img_size: int     = 128
+_cell_device            = None
+_cell_transform         = None
+
+
+def _load_cell_model():
+    """Carga el clasificador de celdas (una sola vez, con caché)."""
+    global _cell_model, _cell_model_attempted, _cell_class_names
+    global _cell_img_size, _cell_device, _cell_transform
+
+    if _cell_model_attempted:
+        return _cell_model
+
+    _cell_model_attempted = True
+
+    if not os.path.exists(CELL_MODEL_PATH):
+        logger.info(
+            "[CELL] Modelo de celdas no encontrado en '%s'. "
+            "Entrénalo con train_cell_classifier.py.",
+            CELL_MODEL_PATH,
+        )
+        return None
+
+    try:
+        import torch
+        from torchvision import models as tvm, transforms
+
+        checkpoint = torch.load(CELL_MODEL_PATH, map_location='cpu')
+        _cell_class_names = checkpoint['class_names']
+        n_classes          = checkpoint['n_classes']
+        _cell_img_size     = checkpoint.get('img_size', 128)
+
+        net = tvm.mobilenet_v2(weights=None)
+        net.classifier[1] = torch.nn.Linear(net.last_channel, n_classes)
+        net.load_state_dict(checkpoint['model_state_dict'])
+        net.eval()
+
+        _cell_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        _cell_model  = net.to(_cell_device)
+
+        _cell_transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((_cell_img_size, _cell_img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+
+        val_acc = checkpoint.get('val_acc', '?')
+        logger.info(
+            "[CELL] Clasificador de celdas cargado: %d clases, val_acc=%.3f, device=%s",
+            n_classes, val_acc if isinstance(val_acc, float) else 0.0, _cell_device,
+        )
+        return _cell_model
+
+    except Exception as exc:
+        logger.error("[CELL] Error al cargar el clasificador de celdas: %s", exc)
+        return None
+
+
+def is_cell_classifier_available() -> bool:
+    """Devuelve True si el clasificador de celdas está listo para usar."""
+    return _load_cell_model() is not None
+
+
+def _cut_cells_warped(warped: np.ndarray) -> dict:
+    """Corta la imagen warpeada 1000×1000 en 64 celdas {chess.Square → BGR 125×125}."""
+    cells = {}
+    cs = int(CELL_SIZE)
+    for col in range(8):      # eje X → rank
+        for row in range(8):  # eje Y → file
+            sq = chess.square(row, col)
+            y1 = row * cs
+            x1 = col * cs
+            cells[sq] = warped[y1:y1 + cs, x1:x1 + cs]
+    return cells
+
+
+def detect_board_state_cells(warped: np.ndarray) -> Optional[BoardState]:
+    """
+    Detecta el estado completo del tablero clasificando cada celda individualmente.
+
+    A diferencia de detect_board_state (YOLO + proyección de perspectiva),
+    esta función opera directamente sobre la imagen warpeada 1000×1000:
+    no hay proyección → no hay error de casilla adyacente.
+
+    Devuelve {chess.Square → símbolo_FEN} o None si el modelo no está disponible.
+    Formato idéntico a detect_board_state para compatibilidad total.
+    """
+    import torch
+
+    model = _load_cell_model()
+    if model is None:
+        return None
+
+    cells  = _cut_cells_warped(warped)
+    result: BoardState = {}
+
+    imgs_batch = []
+    sqs_batch  = []
+
+    for sq, cell_bgr in cells.items():
+        cell_rgb = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2RGB)
+        tensor   = _cell_transform(cell_rgb)
+        imgs_batch.append(tensor)
+        sqs_batch.append(sq)
+
+    batch = torch.stack(imgs_batch).to(_cell_device)
+
+    with torch.no_grad():
+        logits = model(batch)
+        preds  = logits.argmax(dim=1).cpu().numpy()
+
+    # Mapa de labels del clasificador → símbolo FEN.
+    # Los labels usan prefijos w/b (wR, bR...) para evitar el problema de
+    # Windows con carpetas insensibles a mayúsculas (R/ == r/).
+    _LABEL_TO_FEN = {
+        'wK': 'K', 'wQ': 'Q', 'wR': 'R', 'wB': 'B', 'wN': 'N', 'wP': 'P',
+        'bK': 'k', 'bQ': 'q', 'bR': 'r', 'bB': 'b', 'bN': 'n', 'bP': 'p',
+        # Compatibilidad con modelos entrenados sin prefijos (versión antigua)
+        'K': 'K', 'Q': 'Q', 'R': 'R', 'B': 'B', 'N': 'N', 'P': 'P',
+        'k': 'k', 'q': 'q', 'r': 'r', 'b': 'b', 'n': 'n', 'p': 'p',
+    }
+
+    for sq, pred_idx in zip(sqs_batch, preds):
+        label = _cell_class_names[pred_idx]
+        fen_sym = _LABEL_TO_FEN.get(label)
+        if fen_sym:
+            result[sq] = fen_sym
+
+    logger.debug(
+        "[CELL] %d piezas detectadas: %s",
+        len(result),
+        {chess.square_name(sq): sym for sq, sym in result.items()},
+    )
+    return result
+
+
+def invalidate_cell_model_cache() -> None:
+    """Fuerza la recarga del clasificador de celdas en la próxima llamada."""
+    global _cell_model, _cell_model_attempted
+    _cell_model           = None
+    _cell_model_attempted = False

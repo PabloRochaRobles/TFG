@@ -164,14 +164,6 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t.settings.help}</Text>
 
-            <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/about')}>
-              <View style={styles.settingLeft}>
-                <Ionicons name="information-circle-outline" size={24} color={colors.textSecondary} />
-                <Text style={[styles.settingTitle, { color: colors.text }]}>{t.settings.about}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-
             <TouchableOpacity style={[styles.settingItem, { backgroundColor: colors.card, borderBottomColor: colors.border }]} onPress={() => router.push('/tips')}>
               <View style={styles.settingLeft}>
                 <Ionicons name="help-circle-outline" size={24} color={colors.textSecondary} />

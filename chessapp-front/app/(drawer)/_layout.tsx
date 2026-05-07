@@ -77,6 +77,22 @@ function CustomDrawerContent(props: any) {
         />
 
         <DrawerItem
+          label={t.drawer.recordVideo}
+          icon={({ color, size }) => (
+            <FontAwesome name="camera" size={size} color={color} />
+          )}
+          onPress={() => {
+            props.navigation.closeDrawer();
+            router.push('/(drawer)/(tabs)/camera');
+          }}
+          activeTintColor={colors.primary}
+          activeBackgroundColor={colors.primaryLight}
+          inactiveTintColor={colors.text}
+          labelStyle={{ fontSize: 18, fontWeight: '500' }}
+          style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
+        />
+
+        <DrawerItem
           label={t.drawer.analyzePosition}
           icon={({ color, size }) => (
             <FontAwesome name="search" size={size} color={color} />
@@ -118,22 +134,6 @@ function CustomDrawerContent(props: any) {
           onPress={() => {
             props.navigation.closeDrawer();
             router.push('/(drawer)/settings');
-          }}
-          activeTintColor={colors.primary}
-          activeBackgroundColor={colors.primaryLight}
-          inactiveTintColor={colors.text}
-          labelStyle={{ fontSize: 18, fontWeight: '500' }}
-          style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
-        />
-
-        <DrawerItem
-          label={t.drawer.about}
-          icon={({ color, size }) => (
-            <Ionicons name="information-circle" size={size} color={color} />
-          )}
-          onPress={() => {
-            props.navigation.closeDrawer();
-            router.push('/(drawer)/about');
           }}
           activeTintColor={colors.primary}
           activeBackgroundColor={colors.primaryLight}
@@ -345,7 +345,6 @@ export default function DrawerLayout() {
       <Drawer.Screen name="analysis" />
       <Drawer.Screen name="calibrate" />
       <Drawer.Screen name="settings" />
-      <Drawer.Screen name="about" />
     </Drawer>
   );
 }

@@ -211,7 +211,7 @@ export default function UploadScreen() {
 
   const navigation = useNavigation();
   const router = useRouter();
-  const { preloaded } = useLocalSearchParams<{ preloaded?: string }>();
+  const { cameraUri, preloaded } = useLocalSearchParams<{ cameraUri?: string; preloaded?: string }>();
 
   // Ref para saber si la pantalla se abrió desde la librería con un vídeo ya subido
   const preloadedRef = useRef<string | null>(null);
@@ -221,6 +221,16 @@ export default function UploadScreen() {
   const t = useTranslation();
 
   const player = useVideoPlayer('', (p) => { p.loop = true; });
+
+  // Cuando se llega desde la pantalla de cámara con un vídeo recién grabado
+  useEffect(() => {
+    if (cameraUri) {
+      setVideoUri(cameraUri);
+      setVideoFileName('grabacion.mp4');
+      setSavedFileName(null);
+      setPhase('idle');
+    }
+  }, [cameraUri]);
 
   // Cuando se llega desde la librería con un vídeo ya subido, saltar directo a calibración
   useEffect(() => {
@@ -572,23 +582,27 @@ export default function UploadScreen() {
                 </GestureDetector>
               </View>
               <Text style={[styles.zoomHint, { color: colors.textSecondary }]}>
-                Pellizca para hacer zoom · Toca para marcar esquinas
+                {t.upload.zoomHintCalibrate}
               </Text>
+
+              {/* Botón "Deshacer zoom" — ancho completo, solo cuando hay zoom */}
+              {zoomLevel > 1.05 && (
+                <TouchableOpacity
+                  style={[styles.btnSecondaryFull, { borderColor: colors.border }]}
+                  onPress={resetZoom}
+                >
+                  <Ionicons name="scan-outline" size={16} color={colors.text} />
+                  <Text style={[styles.btnSecondaryText, { color: colors.text }]}>
+                    {t.upload.resetZoom}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {/* Botones secundarios */}
               <View style={styles.calibrateActions}>
-                {zoomLevel > 1.05 && (
-                  <TouchableOpacity
-                    style={[styles.btnSecondary, { borderColor: colors.border }]}
-                    onPress={resetZoom}
-                  >
-                    <Ionicons name="scan-outline" size={16} color={colors.text} />
-                    <Text style={[styles.btnSecondaryText, { color: colors.text }]}>Zoom</Text>
-                  </TouchableOpacity>
-                )}
                 {corners.length > 0 && (
                   <TouchableOpacity
-                    style={[styles.btnSecondary, { borderColor: colors.border }]}
+                    style={[styles.btnSecondary, styles.btnSecondaryFlex, { borderColor: colors.border }]}
                     onPress={() => setCorners(c => c.slice(0, -1))}
                   >
                     <Ionicons name="arrow-undo" size={16} color={colors.text} />
@@ -599,7 +613,7 @@ export default function UploadScreen() {
                 )}
                 {corners.length > 0 && (
                   <TouchableOpacity
-                    style={[styles.btnSecondary, { borderColor: colors.border }]}
+                    style={[styles.btnSecondary, styles.btnSecondaryFlex, { borderColor: colors.border }]}
                     onPress={() => { setCorners([]); resetZoom(); }}
                   >
                     <Ionicons name="refresh" size={16} color={colors.text} />
@@ -704,13 +718,13 @@ export default function UploadScreen() {
               </View>
 
               <Text style={[styles.zoomHint, { color: colors.textSecondary }]}>
-                Pellizca para hacer zoom · Desliza para mover
+                {t.upload.zoomHintAdjust}
               </Text>
 
               {/* Botones secundarios de ajuste */}
               <View style={styles.calibrateActions}>
                 <TouchableOpacity
-                  style={[styles.btnSecondary, { borderColor: colors.border }]}
+                  style={[styles.btnSecondary, styles.btnSecondaryFlex, { borderColor: colors.border }]}
                   onPress={resetAdjust}
                 >
                   <Ionicons name="scan-outline" size={16} color={colors.text} />
@@ -720,7 +734,7 @@ export default function UploadScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.btnSecondary, { borderColor: colors.border }]}
+                  style={[styles.btnSecondary, styles.btnSecondaryFlex, { borderColor: colors.border }]}
                   onPress={() => setPhase('calibrating')}
                 >
                   <Ionicons name="arrow-back" size={16} color={colors.text} />
@@ -969,11 +983,22 @@ const styles = StyleSheet.create({
   btnSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
+  },
+  btnSecondaryFlex: { flex: 1 },
+  btnSecondaryFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
   },
   btnSecondaryText: { fontSize: 14 },
 

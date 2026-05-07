@@ -20,9 +20,10 @@ from rest_framework.views import APIView
 
 from .serializers import VideoUploadSerializer
 from .services import (
-    extract_key_frames, save_key_frames, delete_temporary_videos, delete_key_frames,
-    auto_detect_board_corners, get_first_frame, get_initial_board_frame,
-    frames_to_fens_yolo, save_fens, load_fens, delete_fens,
+    extract_key_frames, identify_moves_from_keyframes,
+    save_key_frames, delete_temporary_videos, delete_key_frames,
+    auto_detect_board_corners, get_first_frame,
+    save_fens, load_fens, delete_fens,
     save_corners_config, set_progress, get_progress,
     save_engine_analysis, load_engine_analysis, delete_engine_analysis,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess,
@@ -110,15 +111,16 @@ def _run_analysis_background(task_id: str, file_name: str, video_path: str,
     """
     Hilo de fondo que ejecuta el pipeline completo de análisis de vídeo:
       1. Detección de esquinas del tablero
-      2. Extracción de frames clave (detección de movimiento)
-      3. Generación de FENs con YOLOv8 (o fallback por deltas)
+      2. Fase WHEN: extracción de keyframes (extract_key_frames)
+      3. Fase WHICH: identificación de la partida (identify_moves_from_keyframes)
+      4. Reconstrucción de FENs aplicando los moves en orden
 
     El progreso y el resultado se almacenan en Django Cache bajo la clave
     'analysis_task_<task_id>' para que el WebSocket consumer los lea.
 
     Escala de progreso:
-      0–50  → extracción de frames clave (extract_key_frames)
-      50–100 → generación de FENs (frames_to_fens_yolo)
+      0–50   → extracción de keyframes (gestionado dentro de extract_key_frames)
+      50–100 → identificación de moves + reconstrucción de FENs
     """
     with _capture_session_log(task_id, file_name) as log_path:
         print(f"[SESSION] Log guardado en: {log_path}")
@@ -149,71 +151,74 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
         else:
             corners = auto_detect_board_corners(first_frame)
 
-        # 3. Frame inicial de referencia
-        initial_frame = get_initial_board_frame(video_path, corners)
-
-        # 4. Extraer frames clave (progreso 0→50 gestionado dentro de extract_key_frames)
+        # 3. Fase WHEN — extraer keyframes (progreso 0→50 dentro de la función)
         result = extract_key_frames(video_path, corners, progress_key=file_name)
 
         if isinstance(result, dict) and result.get('error'):
-            raise ValueError(f"Extracción de frames fallida: {result['error']}")
+            raise ValueError(f"Extracción de keyframes fallida: {result['error']}")
 
-        # Nueva interfaz: 5-tupla con los moves ya validados por Phase 4
-        # (key_frames, key_frames_orig, detected_states, mat, accepted_moves)
-        key_frames, key_frames_orig, detected_states, mat, accepted_moves = result
+        # Nueva interfaz (8-tupla): WHEN devuelve solo los keyframes; el move
+        # de cada uno se identifica en la fase WHICH siguiente.
+        (key_frames, key_frames_orig, _empty_states, mat, _empty_moves,
+         key_frame_indices, bootstrap_warped, bootstrap_orig) = result
 
         if not key_frames:
             raise ValueError("No se detectaron movimientos en el vídeo.")
 
-        # 5. Guardar frames clave
+        # 4. Guardar keyframes (inspección visual / debug)
         save_key_frames(key_frames, analysis_id)
 
-        # 6. Generar FENs con YOLOv8 (progreso 50→100) con streaming parcial
-        all_frames = ([initial_frame] + key_frames) if initial_frame is not None else key_frames
-        # Frames originales para YOLO si se necesita re-ejecutar
-        all_original_frames = ([None] + key_frames_orig) if key_frames_orig else None
+        # 5. Fase WHICH — identificar la partida en orden de juego.
+        # which_input[0] es la referencia visual inicial: usamos bootstrap_warped
+        # para que ambas fases usen exactamente el mismo frame de referencia.
+        which_input = ([bootstrap_warped] + key_frames
+                       if bootstrap_warped is not None else key_frames)
+        which_input_orig = ([bootstrap_orig] + key_frames_orig
+                            if bootstrap_orig is not None else key_frames_orig)
 
+        set_progress(file_name, 50)
+        moves, skipped_indices, stats = identify_moves_from_keyframes(
+            key_frames=which_input,
+            key_frames_orig=which_input_orig,
+            homography_M=mat,
+            bootstrap_warped=bootstrap_warped,
+            bootstrap_orig=bootstrap_orig,
+        )
+        print(f"[ANALYSIS] WHICH stats: {stats}")
+        print(f"[ANALYSIS] Moves identificados: {len(moves)}, skipped: {len(skipped_indices)}")
+
+        # 6. Reconstruir FENs aplicando los moves en orden, con streaming parcial
         fens_stream_key = f'analysis_task_{task_id}_fens'
-        streaming_fens = [chess.STARTING_FEN]
-        last_streamed = chess.STARTING_FEN
+        board = chess.Board()
+        fens = [board.fen()]
+        streaming_fens = [board.fen()]
         cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
 
-        def _on_fen(fen: str, _index: int):
-            nonlocal last_streamed
-            if fen != last_streamed:
-                streaming_fens.append(fen)
-                last_streamed = fen
-                cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
-
-        fens = frames_to_fens_yolo(
-            all_frames,
-            progress_key=file_name,
-            on_fen=_on_fen,
-            original_frames=all_original_frames,
-            M=mat,
-            detected_states=detected_states,
-            accepted_moves=accepted_moves,
-        )
-
-        # Eliminar FENs duplicados consecutivos (frames donde no se detectó movimiento)
-        fens_uniq = [fens[0]] if fens else []
-        for f in fens[1:]:
-            if f != fens_uniq[-1]:
-                fens_uniq.append(f)
-        fens = fens_uniq
+        total = max(1, len(moves))
+        for i, mv in enumerate(moves):
+            if mv not in board.legal_moves:
+                print(f"[ANALYSIS] Move {mv.uci()} ilegal en posición actual — "
+                      f"abortando reconstrucción tras {i} moves aplicados.")
+                break
+            board.push(mv)
+            fen = board.fen()
+            fens.append(fen)
+            streaming_fens.append(fen)
+            cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
+            set_progress(file_name, 50 + int((i + 1) / total * 50))
 
         set_progress(file_name, 100)
         save_fens(fens, analysis_id)
 
-        # 7. Almacenar resultado completo en caché
+        # 7. Resultado completo en caché para el WebSocket consumer
         cache.set(f'analysis_task_{task_id}', {
-            'status':      'complete',
-            'progress':    100,
-            'message':     'Análisis completado con éxito.',
-            'analisis_id': analysis_id,
+            'status':       'complete',
+            'progress':     100,
+            'message':      'Análisis completado con éxito.',
+            'analisis_id':  analysis_id,
             'total_frames': len(key_frames),
-            'total_fens':  len(fens),
-            'fens':        fens,
+            'total_fens':   len(fens),
+            'fens':         fens,
         }, timeout=CACHE_TTL)
 
     except Exception as exc:
