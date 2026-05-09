@@ -11,30 +11,45 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
+
+from decouple import Config, RepositoryEnv, UndefinedValueError
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# ── Variables de entorno ──────────────────────────────────────────────────────
+# Se cargan desde `chessapp-back/.env` (gitignored). Para crear/regenerar uno,
+# copiar `.env.example` y rellenar. La key `DJANGO_SECRET_KEY` es obligatoria;
+# si falta, la app se niega a arrancar (mejor un crash claro que una clave
+# débil en producción).
+_env_path = BASE_DIR / '.env'
+if _env_path.exists():
+    config = Config(RepositoryEnv(str(_env_path)))
+else:
+    # Sin .env (típico en CI o contenedor): leer de os.environ directamente.
+    from decouple import config  # type: ignore  # fallback al singleton
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-09jd7zb_f5x*etlbq4jesgmi37%lsl564^jofzn8svrhvi-@bj'
+try:
+    SECRET_KEY = config('DJANGO_SECRET_KEY')
+except UndefinedValueError as exc:
+    raise RuntimeError(
+        'DJANGO_SECRET_KEY no está definida. Crea `chessapp-back/.env` a partir '
+        'de `.env.example` y rellena la clave (ver instrucciones dentro).'
+    ) from exc
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DJANGO_DEBUG', default='false', cast=lambda v: str(v).lower() == 'true')
 
+# Lista separada por comas. Vacía → ningún host permitido (Django bloquea
+# todo). Para añadir el tunnel: DJANGO_ALLOWED_HOSTS=localhost,tu-dominio.com
 ALLOWED_HOSTS = [
-    'localhost',
-    '127.0.0.1',
-    '192.168.1.154',  # IP local para pruebas en red WiFi
-    '.ngrok-free.app',
-    '.ngrok-free.dev',
-    '.ngrok.io',
+    h.strip() for h in config('DJANGO_ALLOWED_HOSTS', default='').split(',') if h.strip()
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS: las apps móviles nativas no respetan CORS, así que esta política sólo
+# afecta a clientes web. Mantenemos abierto en dev; en producción restringir.
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -86,10 +101,10 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'core.wsgi.application'
-
 # ── Django Channels ───────────────────────────────────────────────────────────
-# Punto de entrada ASGI (combina HTTP + WebSocket)
+# Punto de entrada ASGI (combina HTTP + WebSocket).
+# No definimos WSGI_APPLICATION: la app necesita WebSockets para el progreso
+# del análisis, por lo que sólo se sirve vía Daphne/ASGI.
 ASGI_APPLICATION = 'core.asgi.application'
 
 # Canal en memoria para desarrollo (sin Redis).
@@ -111,12 +126,22 @@ CHANNEL_LAYERS = {
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# En producción (Render, Neon, etc.) inyectamos DATABASE_URL como variable
+# de entorno con la URL de PostgreSQL completa. En desarrollo local se usa
+# SQLite por simplicidad.
+_database_url = config('DATABASE_URL', default='')
+if _database_url:
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(_database_url, conn_max_age=600, ssl_require=True),
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -193,4 +218,27 @@ FILE_UPLOAD_HANDLERS = [
 ]
 # Sin límite de RAM para uploads (todo va a disco directamente).
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB (irrelevante con TemporaryFileUploadHandler)
+
+# ── DRF + JWT ─────────────────────────────────────────────────────────────────
+# Autenticación JWT por defecto. Las vistas se siguen marcando explícitamente
+# con `permission_classes` (IsAuthenticated en las protegidas, AllowAny en
+# /register y /login). Así no rompemos vistas existentes hasta el siguiente
+# paso, donde añadimos IsAuthenticated y filtros por usuario una a una.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
+
+SIMPLE_JWT = {
+    # 1 hora: balance entre seguridad y reauths molestas.
+    'ACCESS_TOKEN_LIFETIME':  timedelta(hours=1),
+    # 30 días: el cliente móvil refresca silenciosamente sin reabrir login.
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
+    # Si True, cada refresh genera un refresh token nuevo (y revoca el viejo,
+    # con app instalada `rest_framework_simplejwt.token_blacklist`). De momento
+    # mantenemos el refresh estático para evitar la dependencia extra.
+    'ROTATE_REFRESH_TOKENS': False,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
 

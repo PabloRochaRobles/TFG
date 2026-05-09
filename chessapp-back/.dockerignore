@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Reglas para que Docker no copie al contexto del build cosas que no usamos.
+# Reduce el tiempo de upload a Render y el tamaño de la imagen.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Entornos virtuales y caches
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / OS
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Datos de runtime que se regeneran solos
+media/temp_videos/
+media/temp_frames/
+media/debug/
+media/fens/
+media/engine_analysis/
+runs/
+*.log
+
+# Bases de datos locales
+db.sqlite3
+db.sqlite3-journal
+
+# Variables de entorno locales (las inyecta Render desde su panel)
+.env
+.env.local
+.env.*.local
+
+# Motores Windows (los reemplazamos por binarios Linux dentro del Dockerfile)
+misc/engines/*.exe
+
+# Modelo YOLO local (lo descargamos en build desde HuggingFace)
+media/models/*.pt
+
+# Git
+.git/
+.gitignore
+
+# Documentación de sesión y deploy (no se necesita en runtime)
+SESSION_CONTEXT.md
+DEPLOYMENT.md
+*.md

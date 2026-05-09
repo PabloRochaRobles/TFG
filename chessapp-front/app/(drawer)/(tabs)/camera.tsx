@@ -2,10 +2,10 @@ import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function CameraScreen() {
@@ -15,8 +15,22 @@ export default function CameraScreen() {
   const colors = useThemeColors();
 
   const [permission, requestPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const cameraRef = useRef<CameraView>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const isTogglingRef = useRef(false);
+  const recordStartRef = useRef<number>(0);
+
+  // Aunque grabamos con `mute: true`, el MediaRecorder nativo de Android
+  // inicializa internamente el audio source y puede no finalizar la grabación
+  // si el permiso de micrófono no está concedido en runtime (bug observado en
+  // expo-camera 17 sobre new arch). Lo pedimos en cuanto la cámara está OK.
+  useEffect(() => {
+    if (permission?.granted && micPermission && !micPermission.granted) {
+      requestMicPermission();
+    }
+  }, [permission?.granted, micPermission, requestMicPermission]);
 
   if (!permission) {
     return (
@@ -46,22 +60,56 @@ export default function CameraScreen() {
   }
 
   const handleToggleRecord = async () => {
-    if (!cameraRef.current) return;
-
-    if (isRecording) {
-      cameraRef.current.stopRecording();
+    if (!cameraRef.current) {
+      console.log('[CAM] cameraRef no listo');
+      return;
+    }
+    if (isTogglingRef.current) {
+      console.log('[CAM] ignorado tap (toggling en curso)');
+      return;
+    }
+    if (!isCameraReady) {
+      console.log('[CAM] camara aun no lista');
       return;
     }
 
+    if (isRecording) {
+      const elapsed = Date.now() - recordStartRef.current;
+      if (elapsed < 1100) {
+        console.log(`[CAM] stop demasiado pronto (${elapsed}ms) — esperando 1s`);
+        return;
+      }
+      console.log('[CAM] llamando stopRecording()');
+      isTogglingRef.current = true;
+      try {
+        cameraRef.current.stopRecording();
+      } catch (e) {
+        console.log('[CAM] stopRecording lanzo:', e);
+      } finally {
+        setTimeout(() => { isTogglingRef.current = false; }, 500);
+      }
+      return;
+    }
+
+    // Debounce de 500 ms para absorber doble-taps al INICIAR. No mantenemos
+    // el flag durante toda la grabación porque entonces el segundo tap (stop)
+    // quedaría bloqueado y recordAsync nunca resolvería (deadlock).
+    isTogglingRef.current = true;
+    setTimeout(() => { isTogglingRef.current = false; }, 500);
     setIsRecording(true);
+    recordStartRef.current = Date.now();
+    console.log('[CAM] llamando recordAsync()');
     try {
-      const video = await cameraRef.current.recordAsync();
+      const video = await cameraRef.current.recordAsync({ mute: true });
+      console.log('[CAM] recordAsync resuelto:', video?.uri);
       if (video?.uri) {
         router.push({
           pathname: '/(drawer)/(tabs)/upload',
           params: { cameraUri: video.uri },
         });
       }
+    } catch (e) {
+      console.log('[CAM] recordAsync lanzo:', e);
     } finally {
       setIsRecording(false);
     }
@@ -71,7 +119,16 @@ export default function CameraScreen() {
     <>
       <StatusBar style="light" />
       <View style={styles.container}>
-        <CameraView style={StyleSheet.absoluteFill} ref={cameraRef} mode="video" />
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          ref={cameraRef}
+          mode="video"
+          onCameraReady={() => {
+            console.log('[CAM] camara lista');
+            setIsCameraReady(true);
+          }}
+          onMountError={(err) => console.log('[CAM] mount error:', err)}
+        />
 
         <View style={styles.header}>
           <TouchableOpacity

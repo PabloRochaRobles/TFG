@@ -1,25 +1,35 @@
 // ── Configuración de entorno ──────────────────────────────────────────────────
-// Cambia LOCAL_MODE a true para usar la red WiFi local (subida instantánea).
-// Cambia LOCAL_MODE a false para usar ngrok (acceso desde fuera de la red).
+// LOCAL_MODE = true   → conexión por LAN (móvil + PC en la misma WiFi).
+// LOCAL_MODE = false  → conexión por internet vía Cloudflare Tunnel
+//                       (requiere `cloudflared tunnel --url http://localhost:8000`
+//                       corriendo en el PC del backend).
 //
-// Para obtener tu IP local en Windows: ejecuta `ipconfig` en la terminal
-// y busca "Dirección IPv4" bajo tu adaptador WiFi (p.ej. 192.168.1.42).
-const LOCAL_MODE = true;
+// Cómo obtener tu IP local en Windows: `ipconfig` → "Dirección IPv4" del
+// adaptador WiFi (p.ej. 192.168.1.42).
+const LOCAL_MODE = false;
 const LOCAL_IP   = '192.168.1.154';
 const LOCAL_PORT = '8000';
 
+// URL pública del Cloudflare Tunnel. Cada vez que arranques `cloudflared
+// tunnel --url ...` se genera una distinta — actualízala aquí y vuelve a
+// compilar el .apk. Para una URL fija, configurar un named tunnel con
+// dominio propio en Cloudflare.
+const TUNNEL_HOST = 'conduct-remarks-lotus-punk.trycloudflare.com';
+
 export const API_BASE_URL = LOCAL_MODE
   ? `http://${LOCAL_IP}:${LOCAL_PORT}`
-  : 'https://conjugated-quintan-michel.ngrok-free.dev';
+  : `https://${TUNNEL_HOST}`;
 
 // URL base para WebSockets (mismo host, protocolo ws:// / wss://)
 export const WS_BASE_URL = LOCAL_MODE
   ? `ws://${LOCAL_IP}:${LOCAL_PORT}`
-  : 'wss://conjugated-quintan-michel.ngrok-free.dev';
+  : `wss://${TUNNEL_HOST}`;
 
-const HEADERS: Record<string, string> = LOCAL_MODE
-  ? {}
-  : { 'ngrok-skip-browser-warning': 'true' };
+// La cabecera `Authorization: Bearer <jwt>` la añade automáticamente
+// `apiFetch`. `uploadVideo` la añade a mano porque usa XHR (para tener
+// progreso de subida) y no puede pasar por `apiFetch`.
+import { apiFetch } from '@/app/lib/apiFetch';
+import { tokenStore } from '@/app/lib/tokenStorage';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -55,7 +65,12 @@ export function uploadVideo(
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE_URL}/api/partidas/upload/`);
-    Object.entries(HEADERS).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+    // XHR no pasa por apiFetch (queremos progreso de subida): añadimos
+    // el Bearer manualmente. Si el access ha caducado, el backend
+    // devolverá 401 y el usuario tendrá que reautenticarse.
+    const access = tokenStore.getAccess();
+    if (access) xhr.setRequestHeader('Authorization', `Bearer ${access}`);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress)
@@ -102,14 +117,14 @@ export async function startAnalysis(
   const body: Record<string, unknown> = { video_file: fileName };
   if (corners) body.corners = corners;
 
-  const response = await fetch(`${API_BASE_URL}/api/partidas/analyze/`, {
-    method: 'POST',
-    headers: { ...HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  const response = await apiFetch('/api/partidas/analyze/', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.error || 'Error al iniciar el análisis');
   }
 
@@ -120,12 +135,11 @@ export async function startAnalysis(
  * Conecta al WebSocket de progreso y llama a `onEvent` con cada actualización.
  * Devuelve una función `disconnect()` para cerrar la conexión manualmente.
  *
- * Ejemplo de uso:
- *   const disconnect = watchAnalysis(taskId, (event) => {
- *     if (event.type === 'progress')  setProgress(event.progress);
- *     if (event.type === 'complete')  setFens(event.fens);
- *     if (event.type === 'error')     showError(event.error);
- *   });
+ * Auth del canal: el `task_id` es un UUID generado por el backend y solo se
+ * entrega al usuario propietario del análisis tras pasar por `apiFetch`.
+ * Nos apoyamos en su unicidad como secret. Si en el futuro queremos
+ * endurecer la auth aquí, una opción es pasar el access token como query
+ * string (`?token=<jwt>`) y validar en `consumers.py`.
  */
 export function watchAnalysis(
   taskId: string,
@@ -243,9 +257,8 @@ export function analyzeVideo(
 // ── Progreso HTTP (compatibilidad con código que no use WebSocket) ─────────────
 
 export async function getAnalysisProgress(fileName: string): Promise<number> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/partidas/progress/${encodeURIComponent(fileName)}/`,
-    { headers: HEADERS },
+  const response = await apiFetch(
+    `/api/partidas/progress/${encodeURIComponent(fileName)}/`,
   );
   if (!response.ok) return 0;
   const data = await response.json();
@@ -255,36 +268,55 @@ export async function getAnalysisProgress(fileName: string): Promise<number> {
 // ── Listado y borrado de vídeos ───────────────────────────────────────────────
 
 export async function listVideos(): Promise<string[]> {
-  const response = await fetch(`${API_BASE_URL}/api/partidas/list/`, { headers: HEADERS });
+  const response = await apiFetch('/api/partidas/list/');
   if (!response.ok) throw new Error('Error al obtener la lista de vídeos');
   const data = await response.json();
   return data.videos as string[];
 }
 
 export async function deleteVideo(fileName: string): Promise<void> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/partidas/delete/${encodeURIComponent(fileName)}/`,
-    { method: 'DELETE', headers: HEADERS },
+  const response = await apiFetch(
+    `/api/partidas/delete/${encodeURIComponent(fileName)}/`,
+    { method: 'DELETE' },
   );
   if (!response.ok) throw new Error('Error al eliminar el vídeo');
 }
 
 // ── Calibración ───────────────────────────────────────────────────────────────
 
-export function getFirstFrameUrl(fileName: string): string {
-  return `${API_BASE_URL}/api/partidas/first-frame/${encodeURIComponent(fileName)}/`;
+/**
+ * Devuelve la primera imagen del vídeo como data URL
+ * (`data:image/jpeg;base64,...`) para usar en `<Image source={{ uri }}/>`.
+ *
+ * Antes era una URL HTTP plana, pero ahora el endpoint requiere el JWT y
+ * `<Image>` no permite añadir cabeceras, así que descargamos el blob con
+ * `apiFetch` y lo convertimos a base64 (mismo patrón que
+ * `fetchWarpedPreview`).
+ */
+export async function getFirstFrameUrl(fileName: string): Promise<string> {
+  const response = await apiFetch(
+    `/api/partidas/first-frame/${encodeURIComponent(fileName)}/`,
+  );
+  if (!response.ok) throw new Error('No se pudo obtener el primer frame');
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror   = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export async function fetchWarpedPreview(
   fileName: string,
   corners: [number, number][],
 ): Promise<string> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/partidas/warped-preview/${encodeURIComponent(fileName)}/`,
+  const response = await apiFetch(
+    `/api/partidas/warped-preview/${encodeURIComponent(fileName)}/`,
     {
-      method: 'POST',
-      headers: { ...HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ corners }),
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ corners }),
     },
   );
   if (!response.ok) throw new Error('No se pudo obtener la previsualización');
@@ -297,34 +329,19 @@ export async function fetchWarpedPreview(
   });
 }
 
-export async function calibrateCorners(
-  corners: [number, number][],
-): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/partidas/calibrate/`, {
-    method: 'POST',
-    headers: { ...HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ corners }),
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Error al guardar la calibración');
-  }
-  return response.json();
-}
-
 // ── Análisis de motores ───────────────────────────────────────────────────────
 
 export async function analysisChain(
   fens: string[],
   depth: number = 5,
 ): Promise<PositionAnalysis[]> {
-  const response = await fetch(`${API_BASE_URL}/api/partidas/analysis-chain/`, {
-    method: 'POST',
-    headers: { ...HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fens, depth }),
+  const response = await apiFetch('/api/partidas/analysis-chain/', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ fens, depth }),
   });
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.error || 'Error al calcular las mejores jugadas');
   }
   const data = await response.json();
@@ -332,9 +349,8 @@ export async function analysisChain(
 }
 
 export async function getEngineAnalysis(analysisId: string): Promise<PositionAnalysis[] | null> {
-  const response = await fetch(
-    `${API_BASE_URL}/api/partidas/engine-analysis/${encodeURIComponent(analysisId)}/`,
-    { headers: HEADERS },
+  const response = await apiFetch(
+    `/api/partidas/engine-analysis/${encodeURIComponent(analysisId)}/`,
   );
   if (response.status === 404) return null;
   if (!response.ok)            return null;
@@ -343,9 +359,9 @@ export async function getEngineAnalysis(analysisId: string): Promise<PositionAna
 }
 
 export async function saveEngineAnalysis(analysisId: string, results: PositionAnalysis[]): Promise<void> {
-  await fetch(`${API_BASE_URL}/api/partidas/engine-analysis/`, {
-    method: 'POST',
-    headers: { ...HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ analysis_id: analysisId, results }),
+  await apiFetch('/api/partidas/engine-analysis/', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ analysis_id: analysisId, results }),
   });
 }

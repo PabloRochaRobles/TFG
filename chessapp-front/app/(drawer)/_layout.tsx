@@ -5,8 +5,9 @@ import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { useRouter } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../contexts/AuthContext';
 import { LANGUAGES, useLanguage } from '../contexts/LanguageContext';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -14,9 +15,11 @@ function CustomDrawerContent(props: any) {
   const router = useRouter();
   const { isDarkMode, toggleTheme } = useTheme();
   const { language, setLanguage } = useLanguage();
+  const { logout } = useAuth();
   const colors = useThemeColors();
   const t = useTranslation();
-  const [langExpanded, setLangExpanded] = useState(false);
+  const [langExpanded,    setLangExpanded]    = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   const currentLang = LANGUAGES.find((l) => l.id === language) ?? LANGUAGES[0];
 
@@ -141,6 +144,19 @@ function CustomDrawerContent(props: any) {
           labelStyle={{ fontSize: 18, fontWeight: '500' }}
           style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
         />
+
+        <DrawerSeparator />
+
+        <DrawerItem
+          label={t.auth.logout}
+          icon={({ size }) => (
+            <Ionicons name="log-out-outline" size={size} color="#ef4444" />
+          )}
+          onPress={() => setLogoutConfirmOpen(true)}
+          inactiveTintColor="#ef4444"
+          labelStyle={{ fontSize: 18, fontWeight: '500' }}
+          style={{ borderRadius: 0, marginVertical: 0, paddingVertical: 5, paddingLeft: 0 }}
+        />
       </DrawerContentScrollView>
 
       {/* Controles inferiores: idioma y tema */}
@@ -214,6 +230,59 @@ function CustomDrawerContent(props: any) {
           </View>
         </TouchableOpacity>
       </SafeAreaView>
+
+      {/* Modal de confirmación de cierre de sesión (respeta tema) */}
+      <Modal
+        transparent
+        visible={logoutConfirmOpen}
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setLogoutConfirmOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setLogoutConfirmOpen(false)}
+        >
+          {/* Pressable interno con onPress vacío evita que un toque sobre el
+              card cierre el modal por burbuja del onPress del backdrop. */}
+          <Pressable
+            style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => {}}
+          >
+            <View style={[styles.modalIconWrap, { backgroundColor: '#fee2e2' }]}>
+              <Ionicons name="log-out-outline" size={28} color="#ef4444" />
+            </View>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {t.auth.logoutConfirmTitle}
+            </Text>
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+              {t.auth.logoutConfirmMessage}
+            </Text>
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnSecondary, { borderColor: colors.border }]}
+                onPress={() => setLogoutConfirmOpen(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.modalBtnSecondaryText, { color: colors.text }]}>
+                  {t.auth.cancel}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnDanger]}
+                onPress={async () => {
+                  setLogoutConfirmOpen(false);
+                  props.navigation.closeDrawer();
+                  await logout();
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.modalBtnDangerText}>{t.auth.logout}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -324,6 +393,76 @@ const styles = StyleSheet.create({
   },
   themeToggleActive: {
     alignSelf: 'flex-end',
+  },
+
+  // Modal de confirmación
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    elevation: 10,
+    shadowColor:   '#000',
+    shadowOffset:  { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius:  8,
+  },
+  modalIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalButtonRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnSecondary: {
+    borderWidth: 1,
+  },
+  modalBtnSecondaryText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalBtnDanger: {
+    backgroundColor: '#ef4444',
+  },
+  modalBtnDangerText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

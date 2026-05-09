@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { tokenStore } from '../../lib/tokenStorage';
 import { useTheme } from '../../contexts/ThemeContext';
 
 const LAST_GAME_KEY = 'lastGame';
@@ -40,10 +41,16 @@ function LastGameCard({ game, isAnalyzed, onPress }: LastGameCardProps) {
   const colors = useThemeColors();
   const t = useTranslation();
 
+  // El stream del vídeo requiere JWT en el backend; expo-video acepta
+  // headers en la fuente, así que añadimos Authorization manualmente.
+  const access = tokenStore.getAccess();
   const player = useVideoPlayer(
     {
       uri: `${API_BASE_URL}/api/partidas/stream/${game.file}/`,
-      headers: { 'ngrok-skip-browser-warning': 'true' },
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+        ...(access ? { Authorization: `Bearer ${access}` } : {}),
+      },
     },
     (p) => { p.loop = false; },
   );

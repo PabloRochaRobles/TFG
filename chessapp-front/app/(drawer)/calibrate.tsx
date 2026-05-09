@@ -2,7 +2,7 @@ import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -109,9 +109,17 @@ export default function CalibrateScreen() {
     });
   };
 
-  const frameUri = selectedVideo
-    ? getFirstFrameUrl(selectedVideo)
-    : null;
+  // El primer frame ya no es una URL plana: lo descargamos como data URL
+  // (base64) porque el endpoint requiere JWT y `<Image>` no acepta cabeceras.
+  const [frameUri, setFrameUri] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedVideo) { setFrameUri(null); return; }
+    let cancelled = false;
+    getFirstFrameUrl(selectedVideo)
+      .then((uri) => { if (!cancelled) setFrameUri(uri); })
+      .catch(() => { if (!cancelled) setFrameUri(null); });
+    return () => { cancelled = true; };
+  }, [selectedVideo]);
 
   const nextCorner = corners.length < 4 ? CORNER_ORDER[corners.length] : null;
 

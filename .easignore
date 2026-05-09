@@ -1,0 +1,58 @@
+# Reglas que aplica EAS Build al empaquetar el proyecto. Si existe este
+# fichero, EAS lo usa EN VEZ DE `.gitignore`. La raíz del repo tiene un
+# `.gitignore` con patrones agresivos (`*.json`, `*.png`, etc.) pensados
+# para excluir datos de testing del backend; esos patrones rompen el
+# build de Android porque también nuke `package.json`, `app.json`,
+# iconos, etc. Aquí listamos sólo lo que queremos excluir de verdad.
+
+# ── Backend Python (no parte del .apk) ────────────────────────────────────
+chessapp-back/
+
+# ── Datos y artefactos de runtime ─────────────────────────────────────────
+misc/
+media/
+*.npz
+*.mp4
+
+# ── Entornos virtuales y caches ───────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Node / Expo / Metro (EAS reinstala dependencias en su servidor) ───────
+node_modules/
+.expo/
+dist/
+web-build/
+.metro-health-check*
+
+# ── Logs y caches varios ──────────────────────────────────────────────────
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+
+# ── Documentación de sesión (no se necesita en el build) ──────────────────
+SESSION_CONTEXT.md
+
+# ── Credenciales / secretos ───────────────────────────────────────────────
+.env
+.env.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem

@@ -479,7 +479,19 @@ export default function UploadScreen() {
   };
 
   const isLoading = phase === 'uploading';
-  const frameUri = savedFileName ? getFirstFrameUrl(savedFileName) : null;
+
+  // El primer frame ya no es una URL plana: lo descargamos como data URL
+  // (base64) porque el endpoint requiere JWT y `<Image>` no acepta cabeceras.
+  const [frameUri, setFrameUri] = useState<string | null>(null);
+  useEffect(() => {
+    if (!savedFileName) { setFrameUri(null); return; }
+    let cancelled = false;
+    getFirstFrameUrl(savedFileName)
+      .then((uri) => { if (!cancelled) setFrameUri(uri); })
+      .catch(() => { if (!cancelled) setFrameUri(null); });
+    return () => { cancelled = true; };
+  }, [savedFileName]);
+
   const nextCorner = corners.length < 4 ? CORNER_ORDER[corners.length] : null;
 
   return (

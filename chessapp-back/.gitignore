@@ -1,0 +1,51 @@
+# ── Bytecode y caches de Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+
+# ── Entornos virtuales ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Variables de entorno (secretos) ──────────────────────────────────────────
+# El .env real contiene SECRET_KEY y debe quedarse en local. Se trackea sólo
+# .env.example con placeholders.
+.env
+.env.local
+.env.*.local
+
+# ── Django ───────────────────────────────────────────────────────────────────
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+*.log
+
+# ── Media generada en runtime (no es código fuente) ──────────────────────────
+# Vídeos subidos por usuarios y frames procesados; se regeneran por análisis.
+media/temp_videos/
+media/temp_frames/
+media/debug/
+media/fens/
+media/engine_analysis/
+
+# Modelos YOLO entrenados (binarios pesados; subir aparte o vía LFS).
+media/models/*.pt
+
+# ── Artefactos de entrenamiento local ────────────
+runs/
+yolov8n.pt
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
