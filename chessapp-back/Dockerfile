@@ -122,7 +122,13 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 
 # `collectstatic` para que whitenoise sirva los estáticos del admin.
-RUN python manage.py collectstatic --noinput --clear
+# Las env vars reales (DJANGO_SECRET_KEY, DATABASE_URL, etc.) sólo existen
+# en runtime de Render, no durante el build. settings.py exige SECRET_KEY,
+# así que aquí inyectamos una dummy temporalmente: collectstatic no usa la
+# clave para nada criptográfico, sólo carga el módulo settings. La clave
+# real sigue viniendo del panel de Render en runtime.
+RUN DJANGO_SECRET_KEY=build-time-dummy-key-not-used-at-runtime \
+    python manage.py collectstatic --noinput --clear
 
 # Render asigna el puerto vía $PORT (típicamente 10000). Lo respetamos.
 ENV PORT=8000
