@@ -21,6 +21,7 @@ node_modules/
 *.png
 *.mp4
 
-# Documentación de sesión (contiene secretos locales)
+# Documentaciï¿½n de sesiï¿½n (contiene secretos locales)
 SESSION_CONTEXT.md
 DEPLOYMENT.md
+RENDER_DEPLOYMENT.md

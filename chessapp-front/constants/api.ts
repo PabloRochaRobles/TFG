@@ -14,7 +14,7 @@ const LOCAL_PORT = '8000';
 // tunnel --url ...` se genera una distinta — actualízala aquí y vuelve a
 // compilar el .apk. Para una URL fija, configurar un named tunnel con
 // dominio propio en Cloudflare.
-const TUNNEL_HOST = 'conduct-remarks-lotus-punk.trycloudflare.com';
+const TUNNEL_HOST = 'chessappanalyzer.onrender.com';
 
 export const API_BASE_URL = LOCAL_MODE
   ? `http://${LOCAL_IP}:${LOCAL_PORT}`
