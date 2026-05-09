@@ -20,3 +20,7 @@ node_modules/
 *.txt
 *.png
 *.mp4
+
+# Documentación de sesión (contiene secretos locales)
+SESSION_CONTEXT.md
+DEPLOYMENT.md

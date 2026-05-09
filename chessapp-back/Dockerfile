@@ -92,7 +92,7 @@ RUN cd /tmp \
 # Ejemplo: https://huggingface.co/<user>/<repo>/resolve/main/chess_yolo.pt
 # ──────────────────────────────────────────────────────────────────────────────
 
-ARG YOLO_MODEL_URL=https://huggingface.co/CHANGEME/CHANGEME/resolve/main/chess_yolo.pt
+ARG YOLO_MODEL_URL=https://huggingface.co/pablorr5/chessanalyzer/resolve/main/chess_yolo.pt
 
 RUN mkdir -p /app/media/models \
     && curl -L -o /app/media/models/chess_yolo.pt "${YOLO_MODEL_URL}"
