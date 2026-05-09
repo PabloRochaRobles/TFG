@@ -69,17 +69,23 @@ RUN curl -L -o /app/misc/engines/plentychess "${PLENTYCHESS_URL}" \
 #
 # El repo gab8192/Obsidian no publica binarios Linux, así que clonamos y
 # compilamos. Usamos `make nopgo` (sin Profile-Guided Optimization): ~10-20%
-# más lento que el binario oficial Windows pero compila en ~30-60s y produce
-# un binario funcional. `download-net` baja los pesos NNUE necesarios.
+# más lento que el binario oficial Windows pero compila en 1-2 minutos y
+# produce un binario funcional. La pre-dependencia `download-net` baja
+# automáticamente los pesos NNUE (`net87perm.bin`) antes de compilar.
+#
+# Importante: el Makefile vive en la RAÍZ del repo, no en src/. Y referencia
+# `src/*.cpp` desde ahí, así que `make` debe ejecutarse desde la raíz clonada.
+#
+# `build=avx2` fuerza flags concretos en lugar de `-march=native` (que tomaría
+# las features del CPU del builder de Render). Render tiene CPUs con avx2.
 # ──────────────────────────────────────────────────────────────────────────────
 
 ARG OBSIDIAN_TAG=v16.0
 
 RUN cd /tmp \
     && git clone --depth 1 --branch ${OBSIDIAN_TAG} https://github.com/gab8192/Obsidian.git obsidian-src \
-    && cd obsidian-src/src \
-    && make download-net \
-    && make nopgo \
+    && cd obsidian-src \
+    && make nopgo build=avx2 \
     && cp Obsidian /app/misc/engines/obsidian \
     && chmod +x /app/misc/engines/obsidian \
     && cd / && rm -rf /tmp/obsidian-src
