@@ -49,3 +49,5 @@ yolov8n.pt
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+RENDER_DEPLOYMENT.md
