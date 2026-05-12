@@ -26,4 +26,9 @@ SESSION_CONTEXT.md
 DEPLOYMENT.md
 RENDER_DEPLOYMENT.md
 
-RENDER_DEPLOYMENT.md
+# Carpeta de experimentos: c�digo de entrenamiento + dataset + v�deos (~1 GB).
+# El c�digo de inferencia ya vive en chessapp-back/src/games/chess_tracker/.
+chessapp-back/experiments/
+
+# V�deos comprimidos para testing local
+chessapp-back/test_videos_comprimidos/

@@ -34,9 +34,12 @@ whitenoise==6.6.0
 channels>=4.0.0
 daphne>=4.0.0
 
-# ── YOLOv8 (detección de piezas de ajedrez) ───────────────────────────────────
-# Incluye torch, torchvision y el ecosistema Ultralytics.
-# Instalación: pip install ultralytics
-# Si solo se usa CPU (sin GPU): pip install ultralytics (torch se instala automáticamente)
-# Con GPU CUDA:  pip install ultralytics torch torchvision --index-url https://download.pytorch.org/whl/cu118
-ultralytics>=8.0.0
+# ── Pipeline de visión EfficientNet-B0 ────────────────────────────────────────
+# Sustituye al stack YOLOv8 / Ultralytics. El clasificador por casilla está
+# construido sobre `torchvision.models.efficientnet_b0`; `albumentations`
+# replica exactamente el transform usado durante el entrenamiento (Resize 96
+# + ImageNet normalize); `python-chess` se usa en `move_inferencer` para
+# enumerar jugadas legales.
+torch>=2.0
+torchvision>=0.15
+albumentations>=1.3

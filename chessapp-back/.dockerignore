@@ -40,8 +40,14 @@ db.sqlite3-journal
 # Motores Windows (los reemplazamos por binarios Linux dentro del Dockerfile)
 misc/engines/*.exe
 
-# Modelo YOLO local (lo descargamos en build desde HuggingFace)
+# Modelo local (lo descargamos en build desde HuggingFace)
 media/models/*.pt
+
+# Código de entrenamiento y datasets (no se ejecuta en producción)
+experiments/
+
+# Vídeos comprimidos de prueba local
+test_videos_comprimidos/
 
 # Git
 .git/

@@ -23,8 +23,8 @@ from rest_framework.views import APIView
 from .models import Video
 from .serializers import VideoUploadSerializer
 from .services import (
-    extract_key_frames, identify_moves_from_keyframes,
-    save_key_frames, delete_temporary_videos, delete_key_frames,
+    analyze_video,
+    delete_temporary_videos, delete_key_frames,
     get_first_frame,
     save_fens, load_fens, delete_fens,
     set_progress, get_progress,
@@ -127,18 +127,19 @@ def _capture_session_log(task_id: str, file_name: str):
 def _run_analysis_background(task_id: str, file_name: str, video_path: str,
                               corners_raw, analysis_id: str):
     """
-    Hilo de fondo que ejecuta el pipeline completo de análisis de vídeo:
-      1. Detección de esquinas del tablero
-      2. Fase WHEN: extracción de keyframes (extract_key_frames)
-      3. Fase WHICH: identificación de la partida (identify_moves_from_keyframes)
-      4. Reconstrucción de FENs aplicando los moves en orden
+    Hilo de fondo que ejecuta el análisis de un vídeo:
+      1. Lectura del primer frame y conversión de las 4 esquinas a píxeles.
+      2. Llamada a `analyze_video` (pipeline EfficientNet-B0): selección de
+         frames estables, clasificación por casilla, inferencia de jugadas
+         legales y reconstrucción de FENs en una única pasada.
+      3. Persistencia de los FENs en disco.
 
     El progreso y el resultado se almacenan en Django Cache bajo la clave
     'analysis_task_<task_id>' para que el WebSocket consumer los lea.
 
     Escala de progreso:
-      0–50   → extracción de keyframes (gestionado dentro de extract_key_frames)
-      50–100 → identificación de moves + reconstrucción de FENs
+      0–95  → procesado del vídeo (gestionado dentro de `analyze_video`).
+      95–100 → persistencia y publicación del estado final.
     """
     with _capture_session_log(task_id, file_name) as log_path:
         print(f"[SESSION] Log guardado en: {log_path}")
@@ -164,8 +165,8 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
         set_progress(file_name, pct)  # Mantiene compatibilidad con endpoint de polling
 
     # Watcher: empuja cada 250 ms el progreso del dict en memoria al Django
-    # Cache que lee el WebSocket consumer. Necesario porque WHEN y WHICH
-    # actualizan `_analysis_progress` (vía set_progress) pero no el cache;
+    # Cache que lee el WebSocket consumer. Necesario porque el pipeline
+    # actualiza `_analysis_progress` (vía set_progress) pero no el cache;
     # sin esto la barra del frontend se quedaría a 0 hasta el final.
     _watcher_stop = threading.Event()
 
@@ -198,89 +199,50 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
         h, w = first_frame.shape[:2]
         corners = np.float32([[rx * w, ry * h] for rx, ry in corners_raw])
 
-        # 3. Fase WHEN — extraer keyframes (progreso 0→50 dentro de la función)
-        result = extract_key_frames(video_path, corners, progress_key=file_name)
+        # 3. Análisis end-to-end con el pipeline EfficientNet-B0.
+        #    Una sola llamada cubre: selección de frames estables, clasificación
+        #    por casilla, inferencia de jugadas legales y reconstrucción de
+        #    FENs. El progreso se reporta via set_progress (0→95) desde dentro,
+        #    y el callback `fens_stream_setter` empuja FENs parciales al cache
+        #    para que el WebSocket los emita en tiempo real al frontend.
+        fens_stream_key = f'analysis_task_{task_id}_fens'
 
-        if isinstance(result, dict) and result.get('error'):
-            raise ValueError(f"Extracción de keyframes fallida: {result['error']}")
+        def _push_fens(fens_so_far: list[str]) -> None:
+            cache.set(fens_stream_key, fens_so_far, timeout=CACHE_TTL)
 
-        # Nueva interfaz (8-tupla): WHEN devuelve solo los keyframes; el move
-        # de cada uno se identifica en la fase WHICH siguiente.
-        (key_frames, key_frames_orig, _empty_states, mat, _empty_moves,
-         key_frame_indices, bootstrap_warped, bootstrap_orig) = result
+        fens, moves, stats = analyze_video(
+            video_path, corners,
+            progress_key=file_name,
+            fens_stream_setter=_push_fens,
+        )
 
-        if not key_frames:
+        print(f"[ANALYSIS] Pipeline stats: {stats}")
+        print(f"[ANALYSIS] FENs reconstruidos: {len(fens)} "
+              f"(moves={len(moves)})")
+
+        if len(moves) == 0:
             raise ValueError("No se detectaron movimientos en el vídeo.")
 
-        # 4. Guardar keyframes (inspección visual / debug)
-        save_key_frames(key_frames, analysis_id)
-
-        # 5. Fase WHICH — identificar la partida en orden de juego.
-        # which_input[0] es la referencia visual inicial: usamos bootstrap_warped
-        # para que ambas fases usen exactamente el mismo frame de referencia.
-        which_input = ([bootstrap_warped] + key_frames
-                       if bootstrap_warped is not None else key_frames)
-        which_input_orig = ([bootstrap_orig] + key_frames_orig
-                            if bootstrap_orig is not None else key_frames_orig)
-
-        set_progress(file_name, 50)
-
-        # Callback que mapea el progreso interno (0..1) de la fase WHICH al
-        # rango 50→95 visible en la barra del frontend. La reconstrucción
-        # de FENs posterior cubre el tramo 95→100.
-        def _which_progress(rel: float) -> None:
-            pct = 50 + int(rel * 45)
-            if pct > 95:
-                pct = 95
-            set_progress(file_name, pct)
-
-        moves, skipped_indices, stats = identify_moves_from_keyframes(
-            key_frames=which_input,
-            key_frames_orig=which_input_orig,
-            homography_M=mat,
-            bootstrap_warped=bootstrap_warped,
-            bootstrap_orig=bootstrap_orig,
-            progress_callback=_which_progress,
-        )
-        set_progress(file_name, 95)
-        print(f"[ANALYSIS] WHICH stats: {stats}")
-        print(f"[ANALYSIS] Moves identificados: {len(moves)}, skipped: {len(skipped_indices)}")
-
-        # 6. Reconstruir FENs aplicando los moves en orden, con streaming parcial
-        fens_stream_key = f'analysis_task_{task_id}_fens'
-        board = chess.Board()
-        fens = [board.fen()]
-        streaming_fens = [board.fen()]
-        cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
-
-        total = max(1, len(moves))
-        for i, mv in enumerate(moves):
-            if mv not in board.legal_moves:
-                print(f"[ANALYSIS] Move {mv.uci()} ilegal en posición actual — "
-                      f"abortando reconstrucción tras {i} moves aplicados.")
-                break
-            board.push(mv)
-            fen = board.fen()
-            fens.append(fen)
-            streaming_fens.append(fen)
-            cache.set(fens_stream_key, streaming_fens[:], timeout=CACHE_TTL)
-            # Reconstrucción FEN cubre 95→100 (la WHICH ya nos dejó en 95).
-            set_progress(file_name, 95 + int((i + 1) / total * 5))
-
-        set_progress(file_name, 100)
+        # 4. Persistencia en disco y publicación de la lista final.
         save_fens(fens, analysis_id)
+        cache.set(fens_stream_key, fens, timeout=CACHE_TTL)
 
-        # 7. Detenemos el watcher antes de escribir el estado final para evitar
+        # 5. Detenemos el watcher antes de escribir el estado final para evitar
         # que un push tardío de 'processing' sobreescriba 'complete'.
         _watcher_stop.set()
         _watcher.join(timeout=1.0)
+
+        # `total_frames` equivale al número de frames estables que el pipeline
+        # procesó (suma de todas las decisiones); el frontend lo usa solo a
+        # efectos informativos.
+        total_stable_frames = sum(stats.values()) if stats else 0
 
         cache.set(f'analysis_task_{task_id}', {
             'status':       'complete',
             'progress':     100,
             'message':      'Análisis completado con éxito.',
             'analisis_id':  analysis_id,
-            'total_frames': len(key_frames),
+            'total_frames': total_stable_frames,
             'total_fens':   len(fens),
             'fens':         fens,
         }, timeout=CACHE_TTL)

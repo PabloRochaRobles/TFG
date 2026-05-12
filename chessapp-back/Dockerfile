@@ -11,7 +11,7 @@
 #        - PlentyChess:  binario oficial Linux x86-64 avx2 (descarga directa)
 #      Renombrados a `stockfish`, `obsidian`, `plentychess` (lo que espera
 #      engine_analysis.py en Linux).
-#   4. Descarga el modelo YOLO `chess_yolo.pt` desde HuggingFace.
+#   4. Descarga el modelo EfficientNet-B0 `chess_effnet.pt` desde HuggingFace.
 #   5. Instala dependencias Python (torch CPU-only, mucho más ligero) y
 #      copia el código.
 #   6. Arranca Daphne en el puerto que pase Render (var $PORT).
@@ -91,17 +91,18 @@ RUN cd /tmp \
     && cd / && rm -rf /tmp/obsidian-src
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Modelo YOLO (`chess_yolo.pt`)
+# Modelo EfficientNet-B0 (`chess_effnet.pt`)
 #
-# Subir a HuggingFace como "Model" público y poner aquí la URL de descarga
-# directa (`/resolve/main/...`).
-# Ejemplo: https://huggingface.co/<user>/<repo>/resolve/main/chess_yolo.pt
+# Clasificador por casilla del pipeline nuevo. Alojado públicamente en
+# HuggingFace; se descarga durante el build para evitar trackear el binario
+# (~16 MB) en el repositorio Git. La constante `MODEL_PATH` del backend
+# (`services/config.py`) apunta a `media/models/chess_effnet.pt`.
 # ──────────────────────────────────────────────────────────────────────────────
 
-ARG YOLO_MODEL_URL=https://huggingface.co/pablorr5/chessanalyzer/resolve/main/chess_yolo.pt
+ARG EFFNET_MODEL_URL=https://huggingface.co/pablorr5/chessanalyzer/resolve/main/chess_effnet.pt
 
 RUN mkdir -p /app/media/models \
-    && curl -L -o /app/media/models/chess_yolo.pt "${YOLO_MODEL_URL}"
+    && curl -L -o /app/media/models/chess_effnet.pt "${EFFNET_MODEL_URL}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Python deps
