@@ -15,12 +15,14 @@ fondo, así que dos peticiones simultáneas podrían entrar en `_get_classifier`
 a la vez sin la protección).
 """
 
+import gc
 import os
 import threading
 
 import chess
 import cv2
 import numpy as np
+import torch
 
 from ..chess_tracker.board_detector import BoardCalibration
 from ..chess_tracker.pipeline import process_video as _process_video
@@ -28,6 +30,11 @@ from ..chess_tracker.square_classifier.infer import SquareClassifierInference
 
 from .config import MODEL_PATH
 from .progress import set_progress
+
+
+# Render Free tiene 512 MB de RAM. Forzar `num_threads=1` reduce las arenas que
+# el allocator de PyTorch reserva por hilo, recortando la huella base ~50 MB.
+torch.set_num_threads(1)
 
 
 _classifier_lock = threading.Lock()
@@ -162,4 +169,10 @@ def analyze_video(
     )
 
     set_progress(progress_key, 100)
+
+    # Render Free está a 512 MB; tras procesar un vídeo conviene forzar
+    # `gc.collect()` para que las arenas de numpy/torch liberen páginas
+    # antes de servir la siguiente petición.
+    gc.collect()
+
     return result.fens, result.moves, result.stats()

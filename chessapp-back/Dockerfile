@@ -22,7 +22,14 @@ FROM python:3.11-slim AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    # Render Free tiene 512 MB de RAM. Limitar threads de OpenMP/MKL/OpenBLAS
+    # a 1 reduce las arenas de allocator y la huella base ~80-150 MB. PyTorch
+    # también está configurado con torch.set_num_threads(1) en el adapter.
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1
 
 # System deps:
 #   libgl1, libglib2.0-0   → OpenCV (cv2)
