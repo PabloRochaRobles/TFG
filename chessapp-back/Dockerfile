@@ -98,30 +98,32 @@ RUN cd /tmp \
     && cd / && rm -rf /tmp/obsidian-src
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Modelo EfficientNet-B0 (`chess_effnet.pt`)
+# Modelo EfficientNet-B0 (`chess_effnet.onnx`)
 #
-# Clasificador por casilla del pipeline nuevo. Alojado públicamente en
-# HuggingFace; se descarga durante el build para evitar trackear el binario
-# (~16 MB) en el repositorio Git. La constante `MODEL_PATH` del backend
-# (`services/config.py`) apunta a `media/models/chess_effnet.pt`.
+# Clasificador por casilla del pipeline. El modelo se entrena en PyTorch y
+# se exporta a ONNX offline para que la inferencia en producción la haga
+# `onnxruntime` (huella RAM ~250 MB menor que torch+torchvision), crítico
+# para encajar en Render Free Tier (512 MB).
+# Alojado públicamente en HuggingFace; se descarga durante el build.
+# La constante `MODEL_PATH` del backend apunta a `media/models/chess_effnet.onnx`.
 # ──────────────────────────────────────────────────────────────────────────────
 
-ARG EFFNET_MODEL_URL=https://huggingface.co/pablorr5/chessanalyzer/resolve/main/chess_effnet.pt
+ARG EFFNET_MODEL_URL=https://huggingface.co/pablorr5/chessanalyzer/resolve/main/chess_effnet.onnx
 
 RUN mkdir -p /app/media/models \
-    && curl -L -o /app/media/models/chess_effnet.pt "${EFFNET_MODEL_URL}"
+    && curl -L -o /app/media/models/chess_effnet.onnx "${EFFNET_MODEL_URL}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Python deps
 #
-# torch CPU-only es ~250 MB en lugar de los 1+ GB con CUDA. Render Free
-# no tiene GPU, así que la versión CPU es lo único que necesitamos.
+# Sin torch ni torchvision: la inferencia se hace con onnxruntime, que se
+# instala desde PyPI estándar (no requiere el index extra de download.pytorch.org).
 # ──────────────────────────────────────────────────────────────────────────────
 
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Código de la app

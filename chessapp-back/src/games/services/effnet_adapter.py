@@ -22,7 +22,6 @@ import threading
 import chess
 import cv2
 import numpy as np
-import torch
 
 from ..chess_tracker.board_detector import BoardCalibration
 from ..chess_tracker.pipeline import process_video as _process_video
@@ -32,11 +31,8 @@ from .config import MODEL_PATH
 from .progress import set_progress
 
 
-# Render Free tiene 512 MB de RAM. Forzar `num_threads=1` reduce las arenas que
-# el allocator de PyTorch reserva por hilo, recortando la huella base ~50 MB.
-torch.set_num_threads(1)
-
-
+# El número de threads del runtime se configura dentro de `infer.py` al
+# construir la `onnxruntime.InferenceSession` (intra_op_num_threads=1).
 _classifier_lock = threading.Lock()
 _classifier: SquareClassifierInference | None = None
 

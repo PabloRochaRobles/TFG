@@ -26,10 +26,11 @@ DEBUG_LOCATION           = os.path.join(settings.MEDIA_ROOT, 'debug')
 FENS_LOCATION            = os.path.join(settings.MEDIA_ROOT, 'fens')
 ENGINE_ANALYSIS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'engine_analysis')
 
-# Checkpoint del clasificador EfficientNet-B0 que clasifica cada casilla.
-# En local: copia de `experiments/effnet/.../models/full_final.pt`.
+# Modelo EfficientNet-B0 exportado a ONNX para inferencia con `onnxruntime`
+# (huella RAM ~250 MB menor que torch+torchvision; necesario para Render Free).
+# En local: convertido a partir de `full_final.pt` con `_convert_to_onnx.py`.
 # En producción: descargado por el Dockerfile desde HuggingFace.
-MODEL_PATH               = os.path.join(settings.MEDIA_ROOT, 'models', 'chess_effnet.pt')
+MODEL_PATH               = os.path.join(settings.MEDIA_ROOT, 'models', 'chess_effnet.onnx')
 
 
 # -----------------------------------------------------------------------------
