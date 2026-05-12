@@ -22,12 +22,11 @@ import json
 import os
 import sys
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Daphne/Twisted establece SelectorEventLoopPolicy en Windows, que no soporta
 # subprocess_exec. Forzamos ProactorEventLoop para que los engines UCI puedan
-# lanzar subprocesos desde los hilos del ThreadPoolExecutor — duplicado
-# defensivamente del __init__.py para soportar imports directos de este módulo.
+# lanzar subprocesos — duplicado defensivamente del __init__.py para soportar
+# imports directos de este módulo.
 if sys.platform == 'win32':
     import asyncio as _asyncio
     _asyncio.set_event_loop_policy(_asyncio.WindowsProactorEventLoopPolicy())
@@ -202,29 +201,27 @@ def analysis_best_posPlentyChess(fen):
 
 def analysis_engines_parallel(fen: str) -> tuple:
     """
-    Ejecuta los 3 motores de ajedrez en paralelo usando ThreadPoolExecutor.
+    Ejecuta los 3 motores de ajedrez UNO TRAS OTRO.
 
-    En lugar de la secuencia:
-        stock    → 0.1 s
-        obsidian → 0.1 s
-        plenty   → 0.1 s   (total: 0.3 s por paso)
+    Originalmente esta función arrancaba los 3 motores en paralelo con un
+    ThreadPoolExecutor para que el análisis fuera ~3× más rápido (~0.1 s
+    en lugar de ~0.3 s por posición). En Render Free Tier (512 MB) ese
+    pico simultáneo de memoria (cada motor spawnea su proceso UCI + carga
+    NNUE: ~80-100 MB extra por motor → ~250-300 MB de pico) basta para
+    desbordar el límite y provocar OOM + reinicio del contenedor con un
+    TimeoutError al inicializar UCI.
 
-    Los tres corren simultáneamente (~0.1 s por paso → 3× más rápido).
+    La versión secuencial nunca tiene más de un motor en memoria a la vez,
+    pagando ~3× el tiempo total pero garantizando que cabe en 512 MB. El
+    nombre `_parallel` se conserva por compatibilidad con los importadores
+    en views.py; se considera un cambio internamente trivial.
 
     Devuelve: (resultado_stockfish, resultado_obsidian, resultado_plentychess)
     """
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(analysis_best_posStockfish,   fen): 'stockfish',
-            executor.submit(analysis_best_posObsidian,    fen): 'obsidian',
-            executor.submit(analysis_best_posPlentyChess, fen): 'plentychess',
-        }
-        results = {}
-        for future in as_completed(futures):
-            name = futures[future]
-            results[name] = future.result()  # Re-lanza excepciones si las hay
-
-    return results['stockfish'], results['obsidian'], results['plentychess']
+    stock    = analysis_best_posStockfish(fen)
+    obsidian = analysis_best_posObsidian(fen)
+    plenty   = analysis_best_posPlentyChess(fen)
+    return stock, obsidian, plenty
 
 
 def consensus_analysis(stock, obsidian, plenty, fen):
