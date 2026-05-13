@@ -113,9 +113,15 @@ def analysis_best_posStockfish(fen):
             - new_fen: FEN resultante después de aplicar el movimiento recomendado.
             - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
     """
+    from .memory_probe import mem_log
     path_engine = os.path.join(ENGINES_DIR, _STOCKFISH_BIN)
 
-    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+    with chess.engine.SimpleEngine.popen_uci(path_engine, timeout=30.0) as engine:
+        mem_log("    stockfish.after_popen")
+        # Hash mínimo y un solo hilo para mantener la huella ajustada al
+        # techo de 512 MB de Render Free. Default es 16 MB hash.
+        engine.configure({"Hash": 1, "Threads": 1})
+        mem_log("    stockfish.after_configure")
         board = chess.Board(fen)
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
@@ -144,9 +150,13 @@ def analysis_best_posObsidian(fen):
             - new_fen: FEN resultante después de aplicar el movimiento recomendado.
             - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
     """
+    from .memory_probe import mem_log
     path_engine = os.path.join(ENGINES_DIR, _OBSIDIAN_BIN)
 
-    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+    with chess.engine.SimpleEngine.popen_uci(path_engine, timeout=30.0) as engine:
+        mem_log("    obsidian.after_popen")
+        engine.configure({"Hash": 1, "Threads": 1})
+        mem_log("    obsidian.after_configure")
         board = chess.Board(fen)
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
@@ -176,9 +186,13 @@ def analysis_best_posPlentyChess(fen):
             - new_fen: FEN resultante después de aplicar el movimiento recomendado.
             - score: Evaluación de la posición después del movimiento recomendado (en centipawns, positivo para blancas, negativo para negras).
     """
+    from .memory_probe import mem_log
     path_engine = os.path.join(ENGINES_DIR, _PLENTYCHESS_BIN)
 
-    with chess.engine.SimpleEngine.popen_uci(path_engine) as engine:
+    with chess.engine.SimpleEngine.popen_uci(path_engine, timeout=30.0) as engine:
+        mem_log("    plentychess.after_popen")
+        engine.configure({"Hash": 1, "Threads": 1})
+        mem_log("    plentychess.after_configure")
         board = chess.Board(fen)
         info = engine.analyse(board, chess.engine.Limit(time=0.1))
 
