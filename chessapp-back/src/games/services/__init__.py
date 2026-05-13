@@ -23,6 +23,9 @@ from .config import *  # noqa: F401,F403
 # Progreso de análisis (por clave de vídeo) — ver services/progress.py
 from .progress import set_progress, get_progress  # noqa: F401
 
+# Sondas de memoria para diagnosticar OOM — ver services/memory_probe.py
+from .memory_probe import mem_log  # noqa: F401
+
 # I/O de vídeo y frames — ver services/video_io.py
 from .video_io import (  # noqa: F401
     delete_temporary_videos, open_video, process_image, get_matriz,

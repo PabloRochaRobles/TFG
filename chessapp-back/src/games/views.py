@@ -32,6 +32,7 @@ from .services import (
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess,
     consensus_analysis, analysis_engines_parallel,
     get_warped_frame_preview,
+    mem_log,
 )
 
 
@@ -187,11 +188,13 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
 
     try:
         _update(0)
+        mem_log("analysis_start")
 
         # 1. Leer primer frame
         first_frame = get_first_frame(video_path)
         if first_frame is None:
             raise ValueError("No se pudo leer el vídeo.")
+        mem_log("after_first_frame")
 
         # 2. Esquinas: el frontend siempre envía las 4 esquinas relativas
         if not corners_raw or len(corners_raw) != 4:
@@ -210,11 +213,13 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
         def _push_fens(fens_so_far: list[str]) -> None:
             cache.set(fens_stream_key, fens_so_far, timeout=CACHE_TTL)
 
+        mem_log("before_analyze_video")
         fens, moves, stats = analyze_video(
             video_path, corners,
             progress_key=file_name,
             fens_stream_setter=_push_fens,
         )
+        mem_log("after_analyze_video")
 
         print(f"[ANALYSIS] Pipeline stats: {stats}")
         print(f"[ANALYSIS] FENs reconstruidos: {len(fens)} "
@@ -506,8 +511,9 @@ class AnalysisChainView(APIView):
 
             for step in range(1, depth + 1):
                 try:
-                    # ── Tres motores en paralelo (ThreadPoolExecutor) ─────────
+                    mem_log(f"engines_step_{step}_start")
                     stock, obsidian, plenty = analysis_engines_parallel(current_fen)
+                    mem_log(f"engines_step_{step}_done")
 
                     agree     = (stock['movement_uci'] == obsidian['movement_uci'] == plenty['movement_uci'])
                     consensus = consensus_analysis(stock, obsidian, plenty, current_fen)

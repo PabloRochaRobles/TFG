@@ -218,9 +218,14 @@ def analysis_engines_parallel(fen: str) -> tuple:
 
     Devuelve: (resultado_stockfish, resultado_obsidian, resultado_plentychess)
     """
+    from .memory_probe import mem_log
+    mem_log("  engines.before_stockfish")
     stock    = analysis_best_posStockfish(fen)
+    mem_log("  engines.after_stockfish")
     obsidian = analysis_best_posObsidian(fen)
+    mem_log("  engines.after_obsidian")
     plenty   = analysis_best_posPlentyChess(fen)
+    mem_log("  engines.after_plentychess")
     return stock, obsidian, plenty
 
 

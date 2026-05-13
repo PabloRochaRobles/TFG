@@ -30,6 +30,9 @@ tzdata==2025.2
 urllib3==2.6.1
 whitenoise==6.6.0
 
+# Diagnóstico de memoria (sondas de RSS en logs).
+psutil>=5.9
+
 # ── Django Channels (WebSocket para progreso en tiempo real) ──────────────────
 channels>=4.0.0
 daphne>=4.0.0
