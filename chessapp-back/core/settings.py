@@ -41,6 +41,18 @@ except UndefinedValueError as exc:
 
 DEBUG = config('DJANGO_DEBUG', default='false', cast=lambda v: str(v).lower() == 'true')
 
+# Feature flag: análisis posicional con motores UCI (Stockfish / Obsidian /
+# PlentyChess). Cada motor spawnea un subproceso al inicializar, y en
+# plataformas con techo de RAM bajo (Render Free, 512 MB) el `fork() + exec()`
+# desde un proceso Python ya cargado con onnxruntime + Django provoca OOM por
+# overcommit del kernel. En esos despliegues conviene poner
+# `ENABLE_ENGINES=false` en las variables de entorno; el endpoint
+# `/api/partidas/analysis-chain/` responderá indicando que la feature no
+# está disponible. En local (default `true`) funciona con normalidad.
+ENABLE_ENGINES = config(
+    'ENABLE_ENGINES', default='true', cast=lambda v: str(v).lower() == 'true',
+)
+
 # Lista separada por comas. Vacía → ningún host permitido (Django bloquea
 # todo). Para añadir el tunnel: DJANGO_ALLOWED_HOSTS=localhost,tu-dominio.com
 ALLOWED_HOSTS = [

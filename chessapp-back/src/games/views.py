@@ -487,6 +487,25 @@ class AnalysisChainView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Feature flag: en Render Free (512 MB) spawnear los motores UCI
+        # desencadena OOM por overcommit durante el fork+exec. En esos
+        # despliegues se pone `ENABLE_ENGINES=false` y este endpoint
+        # devuelve una respuesta estructurada indicando indisponibilidad;
+        # el frontend mostrará el aviso correspondiente.
+        if not getattr(settings, 'ENABLE_ENGINES', True):
+            return Response(
+                {
+                    'error': (
+                        'El análisis con motores UCI no está disponible en '
+                        'este despliegue por limitaciones de memoria del '
+                        'proveedor de hosting. Está habilitado en local.'
+                    ),
+                    'results': [],
+                    'engines_available': False,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         fens  = request.data.get('fens', [])
         depth = int(request.data.get('depth', 5))
 
