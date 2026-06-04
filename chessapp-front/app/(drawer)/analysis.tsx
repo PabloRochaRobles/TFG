@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { analysisChain, analyzeVideoWithProgress, getEngineAnalysis, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
+import { analysisChain, analyzeVideoWithProgress, getEngineAnalysis, getKeyframeUrl, PositionAnalysis, saveEngineAnalysis } from '@/constants/api';
+import ChessPiece from '@/components/ChessPiece';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
@@ -7,7 +8,7 @@ import { DrawerActions } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Clipboard, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Clipboard, Dimensions, Image, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -20,11 +21,10 @@ export type LastGameData = {
   date: string;
 };
 
-// Mapeo de letras FEN a símbolos Unicode de ajedrez
-const PIECE_SYMBOLS: Record<string, string> = {
-  K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟',
-  k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
-};
+// Tamaño relativo de la pieza dentro de la casilla (0-1).
+// Las SVG del set Merida ocupan toda su viewBox así que 0.85 deja un
+// pequeño aire visual sin recortar los detalles.
+const PIECE_SIZE_RATIO = 0.85;
 
 // ── Helpers para el análisis de motores ─────────────────────────────────────
 
@@ -77,19 +77,40 @@ function fenToBoard(fen: string): string[][] {
   });
 }
 
+// Devuelve el conjunto de casillas (clave "rowIdx,colIdx") que cambian entre
+// dos posiciones FEN. Para una jugada normal son 2 (origen y destino); para
+// un enroque 4; para una captura al paso 3. Diferenciar las matrices es
+// robusto frente a todos los casos especiales sin tener que parsear la jugada.
+function changedSquares(prevFen: string | undefined, curFen: string | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!prevFen || !curFen) return out;
+  const a = fenToBoard(prevFen);
+  const b = fenToBoard(curFen);
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (a[r]?.[c] !== b[r]?.[c]) out.add(`${r},${c}`);
+    }
+  }
+  return out;
+}
+
 type Phase = 'analyzing' | 'done' | 'error';
 
 export default function AnalysisScreen() {
   const router = useRouter();
   const navigation = useNavigation();
-  const { file, corners: cornersParam, fen: fenParam } = useLocalSearchParams<{ file?: string; corners?: string; fen?: string }>();
+  const { file, corners: cornersParam, fen: fenParam, fens: fensParam } = useLocalSearchParams<{ file?: string; corners?: string; fen?: string; fens?: string }>();
   const colors = useThemeColors();
   const { isDarkMode } = useTheme();
   const t = useTranslation();
 
-  const isFenMode = !!fenParam && !file;
+  // Modo "directo": llega una secuencia de FENs ya detectados por la sesión
+  // en tiempo real; solo hay que pasar cada posición por los motores.
+  const isLiveMode = !!fensParam;
+  const isFenMode  = !!fenParam && !file && !isLiveMode;
 
   const [phase, setPhase] = useState<Phase>('analyzing');
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const [totalFrames, setTotalFrames] = useState<number>(0);
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [fens, setFens] = useState<string[]>([]);
@@ -133,13 +154,104 @@ export default function AnalysisScreen() {
 
   const maxMove = fens.length > 0 ? fens.length - 1 : 0;
 
+  // ── Reproducción automática de la partida ──────────────────────────────────
+  // Mientras `isPlaying` está activo se avanza una jugada cada
+  // AUTOPLAY_INTERVAL_MS. El efecto se reprograma en cada cambio de
+  // `currentMove`, encadenando los avances; al llegar al final se detiene solo.
+  const AUTOPLAY_INTERVAL_MS = 1250;
+  const [isPlaying, setIsPlaying] = useState(false);
+
   useEffect(() => {
-    if (fenParam) runFenAnalysis(fenParam);
+    if (!isPlaying) return;
+    if (currentMove >= maxMove) { setIsPlaying(false); return; }
+    const id = setTimeout(
+      () => setCurrentMove(c => Math.min(maxMove, c + 1)),
+      AUTOPLAY_INTERVAL_MS,
+    );
+    return () => clearTimeout(id);
+  }, [isPlaying, currentMove, maxMove]);
+
+  // Play/pausa. Si se pulsa al final de la partida, reinicia desde el principio.
+  const togglePlay = () => {
+    if (!isPlaying && currentMove >= maxMove) setCurrentMove(0);
+    setIsPlaying(p => !p);
+  };
+
+  // Cualquier navegación manual detiene la reproducción automática.
+  const stopAndGo = (target: number) => {
+    setIsPlaying(false);
+    setCurrentMove(target);
+  };
+
+  // ── Switch: tablero reconstruido vs frame real del vídeo ───────────────────
+  // Cuando está activo se muestra la vista cenital rectificada que el
+  // pipeline extrajo del vídeo para deducir esta jugada, en vez del tablero
+  // reconstruido. Sólo tiene sentido fuera del modo FEN (analyze-position),
+  // donde no existe vídeo de origen.
+  const [showRealFrame, setShowRealFrame] = useState(false);
+  const [keyframeUri, setKeyframeUri] = useState<string | null>(null);
+  const [keyframeLoading, setKeyframeLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showRealFrame || isFenMode || !analysisId || currentMove === 0) {
+      setKeyframeUri(null);
+      return;
+    }
+    let cancelled = false;
+    setKeyframeLoading(true);
+    setKeyframeUri(null);
+    getKeyframeUrl(analysisId, currentMove)
+      .then((uri) => { if (!cancelled) setKeyframeUri(uri); })
+      .catch(() => { if (!cancelled) setKeyframeUri(null); })
+      .finally(() => { if (!cancelled) setKeyframeLoading(false); });
+    return () => { cancelled = true; };
+  }, [showRealFrame, isFenMode, analysisId, currentMove]);
+
+  useEffect(() => {
+    if (fensParam) runLiveFensAnalysis(fensParam);
+    else if (fenParam) runFenAnalysis(fenParam);
     else if (file) runAnalysis();
-  }, [file, fenParam]);
+  }, [file, fenParam, fensParam]);
+
+  // Modo directo: recibe la lista de FENs (posición inicial + una por jugada)
+  // ya reconstruida durante la sesión en tiempo real. No hay vídeo de origen
+  // ni keyframes; solo se encola el análisis de motores de cada posición,
+  // igual que en el flujo de vídeo una vez detectados los FENs.
+  const runLiveFensAnalysis = (raw: string) => {
+    let fenList: string[];
+    try {
+      fenList = JSON.parse(raw);
+    } catch {
+      setErrorMessage('');
+      setPhase('error');
+      return;
+    }
+    if (!Array.isArray(fenList) || fenList.length === 0) {
+      setErrorMessage('No se detectaron movimientos en el vídeo.');
+      setPhase('error');
+      return;
+    }
+
+    setPhase('analyzing');
+    setErrorMessage('');
+    setCurrentMove(0);
+    setAnalysisProgress(100);
+    setFens(fenList);
+    setEngineAnalysis([]);
+    setAnalysisId(null);
+    fensRef.current        = [...fenList];
+    engineRef.current      = [];
+    pendingQueueRef.current = [];
+    activeCountRef.current  = 0;
+    setTotalFrames(fenList.length > 0 ? fenList.length - 1 : 0);
+
+    fenList.forEach((fen, i) => enqueueFen(fen, i));
+    setPhase('done');
+  };
 
   const runFenAnalysis = (fen: string) => {
     setPhase('analyzing');
+    setErrorMessage('');
     setCurrentMove(0);
     setAnalysisProgress(10);
     setFens([]);
@@ -155,11 +267,13 @@ export default function AnalysisScreen() {
       .then((results) => {
         const posAnalysis = results[0];
         if (!posAnalysis) {
+          setErrorMessage('');
           setPhase('error');
           return;
         }
         const validSteps = (posAnalysis.chain ?? []).filter((s) => s.engines != null);
         if (validSteps.length === 0) {
+          setErrorMessage('');
           setPhase('error');
           return;
         }
@@ -173,11 +287,12 @@ export default function AnalysisScreen() {
         setAnalysisProgress(100);
         setPhase('done');
       })
-      .catch(() => setPhase('error'));
+      .catch(() => { setErrorMessage(''); setPhase('error'); });
   };
 
   const runAnalysis = () => {
     setPhase('analyzing');
+    setErrorMessage('');
     setCurrentMove(0);
     setAnalysisProgress(0);
     setFens([]);
@@ -241,7 +356,7 @@ export default function AnalysisScreen() {
 
         setPhase('done');
       },
-      (_err) => setPhase('error'),
+      (err) => { setErrorMessage(err ?? ''); setPhase('error'); },
       (fen, index) => {
         // fen_ready: stream FEN and queue engine analysis immediately
         fensRef.current[index] = fen;
@@ -288,7 +403,7 @@ export default function AnalysisScreen() {
           {/* Nombre del fichero o FEN de origen */}
           <View style={[styles.fileInfo, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Ionicons
-              name={isFenMode ? 'code-slash-outline' : 'film-outline'}
+              name={isLiveMode ? 'flash-outline' : (isFenMode ? 'code-slash-outline' : 'film-outline')}
               size={18}
               color={colors.textSecondary}
             />
@@ -297,7 +412,9 @@ export default function AnalysisScreen() {
               numberOfLines={2}
               ellipsizeMode="tail"
             >
-              {isFenMode ? `${t.analysis.fenLabel} ${fenParam}` : (file ?? t.analysis.noFile)}
+              {isLiveMode
+                ? t.analysis.liveSource
+                : (isFenMode ? `${t.analysis.fenLabel} ${fenParam}` : (file ?? t.analysis.noFile))}
             </Text>
           </View>
 
@@ -322,21 +439,35 @@ export default function AnalysisScreen() {
           )}
 
           {/* ── Estado: error ── */}
-          {phase === 'error' && (
-            <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
-              <Ionicons name="alert-circle-outline" size={52} color="#ef4444" />
-              <Text style={[styles.statusTitle, { color: colors.text }]}>{t.analysis.error}</Text>
-              <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
-                {isFenMode ? t.analysis.processingErrorFen : t.analysis.processingError}
-              </Text>
-              <TouchableOpacity
-                style={[styles.retryButton, { backgroundColor: colors.buttonBg }]}
-                onPress={() => (isFenMode ? runFenAnalysis(fenParam!) : runAnalysis())}
-              >
-                <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>{t.analysis.retry}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          {phase === 'error' && (() => {
+            // El backend lanza `ValueError("No se detectaron movimientos en el vídeo.")`
+            // cuando el pipeline acaba sin haber inferido ningún movimiento. Lo
+            // detectamos por substring para distinguirlo del error genérico.
+            const isNoMoves = !isFenMode && /no\s+se\s+detectaron\s+movimientos|no\s+movements?\s+detected/i.test(errorMessage);
+            return (
+              <View style={[styles.statusBox, { backgroundColor: colors.card }]}>
+                <Ionicons
+                  name={isNoMoves ? 'information-circle-outline' : 'alert-circle-outline'}
+                  size={52}
+                  color={isNoMoves ? colors.primary : '#ef4444'}
+                />
+                <Text style={[styles.statusTitle, { color: colors.text }]}>
+                  {isNoMoves ? t.analysis.noMovesTitle : t.analysis.error}
+                </Text>
+                <Text style={[styles.statusSub, { color: colors.textSecondary }]}>
+                  {isFenMode
+                    ? t.analysis.processingErrorFen
+                    : (isNoMoves ? t.analysis.noMovesDetected : t.analysis.processingError)}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.retryButton, { backgroundColor: colors.buttonBg }]}
+                  onPress={() => (isLiveMode ? runLiveFensAnalysis(fensParam!) : (isFenMode ? runFenAnalysis(fenParam!) : runAnalysis()))}
+                >
+                  <Text style={[styles.retryButtonText, { color: colors.buttonText }]}>{t.analysis.retry}</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
 
           {/* ── Estado: completado ── */}
           {phase === 'done' && (
@@ -365,64 +496,133 @@ export default function AnalysisScreen() {
                 )}
               </View>
 
-              {/* Tablero de ajedrez con piezas reales */}
+              {/* Tablero reconstruido o frame real del vídeo */}
               <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
-                <View style={styles.chessBoard}>
-                  {(fens.length > 0 ? fenToBoard(fens[currentMove]) : Array(8).fill(Array(8).fill(''))).map((row, rowIdx) => (
-                    <View key={rowIdx} style={styles.boardRow}>
-                      {(row as string[]).map((piece, colIdx) => {
-                        const isLight = (rowIdx + colIdx) % 2 === 0;
-                        const isWhitePiece = piece !== '' && piece === piece.toUpperCase();
-                        return (
-                          <View key={colIdx} style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}>
-                            {piece !== '' && (
-                              <Text style={[styles.piece, { color: isWhitePiece ? '#F6F6F6' : '#1a1a1a', textShadowColor: isWhitePiece ? '#555' : '#ddd' }]}>
-                                {PIECE_SYMBOLS[piece] ?? ''}
-                              </Text>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ))}
-                </View>
+                {showRealFrame && !isFenMode && !isLiveMode ? (
+                  <View style={styles.chessBoard}>
+                    {keyframeLoading ? (
+                      <View style={styles.framePlaceholder}>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                      </View>
+                    ) : keyframeUri ? (
+                      <Image
+                        source={{ uri: keyframeUri }}
+                        style={{ width: BOARD_SIZE, height: BOARD_SIZE }}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={[styles.framePlaceholder, { padding: 20 }]}>
+                        <Ionicons name="image-outline" size={40} color={colors.textSecondary} />
+                        <Text style={[styles.framePlaceholderText, { color: colors.textSecondary }]}>
+                          {currentMove === 0
+                            ? t.analysis.frameNoInitial
+                            : t.analysis.frameUnavailable}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.chessBoard}>
+                    {(() => {
+                      const highlights = currentMove > 0
+                        ? changedSquares(fens[currentMove - 1], fens[currentMove])
+                        : new Set<string>();
+                      const board = fens.length > 0
+                        ? fenToBoard(fens[currentMove])
+                        : Array(8).fill(Array(8).fill(''));
+                      return board.map((row, rowIdx) => (
+                        <View key={rowIdx} style={styles.boardRow}>
+                          {(row as string[]).map((piece, colIdx) => {
+                            const isLight = (rowIdx + colIdx) % 2 === 0;
+                            const isHighlighted = highlights.has(`${rowIdx},${colIdx}`);
+                            return (
+                              <View
+                                key={colIdx}
+                                style={[
+                                  styles.square,
+                                  isLight ? styles.lightSquare : styles.darkSquare,
+                                ]}
+                              >
+                                {isHighlighted && (
+                                  <View style={styles.highlightOverlay} pointerEvents="none" />
+                                )}
+                                {piece !== '' && (
+                                  <ChessPiece piece={piece} size={Math.floor(CELL_SIZE * PIECE_SIZE_RATIO)} />
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      ));
+                    })()}
+                  </View>
+                )}
+
+                {/* Switch: tablero vs frame real (solo cuando hay vídeo de
+                    origen; oculto en modo FEN y en modo directo). */}
+                {!isFenMode && !isLiveMode && (
+                  <View style={styles.frameSwitchRow}>
+                    <Ionicons
+                      name={showRealFrame ? 'videocam' : 'grid'}
+                      size={18}
+                      color={colors.textSecondary}
+                    />
+                    <Text style={[styles.frameSwitchLabel, { color: colors.textSecondary }]}>
+                      {showRealFrame ? t.analysis.frameShowingReal : t.analysis.frameShowingBoard}
+                    </Text>
+                    <Switch
+                      value={showRealFrame}
+                      onValueChange={setShowRealFrame}
+                      trackColor={{ false: colors.border, true: colors.primary }}
+                      thumbColor="#ffffff"
+                    />
+                  </View>
+                )}
               </View>
 
               {/* Navegación de movimientos */}
               <View style={[styles.controls, { backgroundColor: colors.card }]}>
-                <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(0)}
-                  disabled={currentMove === 0}
-                >
-                  <Ionicons name="play-skip-back" size={22} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(c => Math.max(0, c - 1))}
-                  disabled={currentMove === 0}
-                >
-                  <Ionicons name="chevron-back" size={26} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
-                </TouchableOpacity>
                 <View style={[styles.moveCountBadge, { backgroundColor: colors.primaryLight }]}>
                   <Text style={[styles.moveCountText, { color: colors.primary }]}>
                     {currentMove} / {maxMove}
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(c => Math.min(maxMove, c + 1))}
-                  disabled={currentMove === maxMove}
-                >
-                  <Ionicons name="chevron-forward" size={26} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
-                  onPress={() => setCurrentMove(maxMove)}
-                  disabled={currentMove === maxMove}
-                >
-                  <Ionicons name="play-skip-forward" size={22} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
-                </TouchableOpacity>
+                <View style={styles.controlsRow}>
+                  <TouchableOpacity
+                    style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
+                    onPress={() => stopAndGo(0)}
+                    disabled={currentMove === 0}
+                  >
+                    <Ionicons name="play-skip-back" size={22} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === 0 && styles.controlButtonDisabled]}
+                    onPress={() => stopAndGo(Math.max(0, currentMove - 1))}
+                    disabled={currentMove === 0}
+                  >
+                    <Ionicons name="chevron-back" size={26} color={currentMove === 0 ? colors.textSecondary : colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.playButton, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    onPress={togglePlay}
+                  >
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} size={26} color={colors.buttonText} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
+                    onPress={() => stopAndGo(Math.min(maxMove, currentMove + 1))}
+                    disabled={currentMove === maxMove}
+                  >
+                    <Ionicons name="chevron-forward" size={26} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.controlButton, { backgroundColor: colors.primaryLight, borderColor: colors.primary }, currentMove === maxMove && styles.controlButtonDisabled]}
+                    onPress={() => stopAndGo(maxMove)}
+                    disabled={currentMove === maxMove}
+                  >
+                    <Ionicons name="play-skip-forward" size={22} color={currentMove === maxMove ? colors.textSecondary : colors.primary} />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Análisis de motores */}
@@ -678,17 +878,31 @@ const styles = StyleSheet.create({
   square: { width: CELL_SIZE, height: CELL_SIZE, alignItems: 'center', justifyContent: 'center' },
   lightSquare: { backgroundColor: '#f0d9b5' },
   darkSquare: { backgroundColor: '#b58863' },
-  piece: {
-    fontSize: 22,
-    textAlign: 'center',
-    textShadowOffset: { width: 0.5, height: 0.5 },
-    textShadowRadius: 1,
+  highlightOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 213, 79, 0.55)',
   },
   boardCaption: { fontSize: 12 },
+  framePlaceholder: {
+    width: BOARD_SIZE,
+    height: BOARD_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  framePlaceholderText: { fontSize: 13, textAlign: 'center' },
+  frameSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  frameSwitchLabel: { fontSize: 13, flexShrink: 1 },
 
   // Controles
   controls: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 12,
@@ -701,6 +915,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
+  controlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
   controlButton: {
     width: 52,
     height: 52,
@@ -708,6 +928,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
+  },
+  playButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
   controlButtonDisabled: { opacity: 0.4 },
   moveCountBadge: {

@@ -27,6 +27,7 @@ from .services import (
     delete_temporary_videos, delete_key_frames,
     get_first_frame,
     save_fens, load_fens, delete_fens,
+    keyframe_path, delete_keyframes,
     set_progress, get_progress,
     save_engine_analysis, load_engine_analysis, delete_engine_analysis,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess,
@@ -218,6 +219,7 @@ def _run_analysis_core(task_id: str, file_name: str, video_path: str,
             video_path, corners,
             progress_key=file_name,
             fens_stream_setter=_push_fens,
+            analysis_id=analysis_id,
         )
         mem_log("after_analyze_video")
 
@@ -462,12 +464,69 @@ class VideoStreamView(APIView):
             return Response({'error': 'No se ha encontrado el vídeo.'}, status=status.HTTP_404_NOT_FOUND)
         if not os.path.isfile(video_path):
             return Response({'error': 'No es un archivo válido.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ExoPlayer (expo-video en Android) sondea el fichero con peticiones
+        # HTTP Range para leer el `moov` atom, calcular la duración y permitir
+        # el seek. Sin soporte de Range el reproductor no inicializa y muestra
+        # 0:00 sin imagen. Además, servir el fichero por chunks (FileResponse)
+        # en lugar de cargarlo entero en RAM evita el pico de memoria que en
+        # Render Free provocaba OOM con vídeos de decenas de MB.
         try:
-            with open(video_path, 'rb') as f:
-                content = f.read()
-            from django.http import HttpResponse
-            response = HttpResponse(content, content_type='video/mp4')
-            response['Content-Length'] = len(content)
+            import re as _re
+            from django.http import FileResponse, StreamingHttpResponse
+
+            # Tope de bytes servidos por petición Range. ExoPlayer suele
+            # pedir un rango abierto ("bytes=0-"): si se sirviera el
+            # fichero entero (cientos de MB) en una sola respuesta, habría
+            # que leerlo completo en memoria antes de empezar a enviar ->
+            # minutos de espera y pantalla negra. Sirviendo como mucho este
+            # bloque por respuesta, el reproductor obtiene la cabecera y el
+            # primer fotograma de inmediato y va pidiendo más rangos según
+            # los necesita (reproducción progresiva, memoria acotada).
+            _RANGE_CHUNK = 4 * 1024 * 1024  # 4 MB
+            _READ_BLOCK = 64 * 1024          # 64 KB por iteración
+
+            file_size = os.path.getsize(video_path)
+            range_header = request.headers.get('Range', '').strip()
+            range_match = _re.match(r'bytes=(\d+)-(\d*)', range_header or '')
+
+            if range_match:
+                start = int(range_match.group(1))
+                requested_end = (
+                    int(range_match.group(2)) if range_match.group(2)
+                    else file_size - 1
+                )
+                start = max(0, min(start, file_size - 1))
+                # Limitar el tramo realmente devuelto (HTTP permite servir
+                # menos de lo pedido si Content-Range lo refleja).
+                end = min(requested_end, file_size - 1, start + _RANGE_CHUNK - 1)
+                length = end - start + 1
+
+                def _stream_slice():
+                    with open(video_path, 'rb') as f:
+                        f.seek(start)
+                        remaining = length
+                        while remaining > 0:
+                            data = f.read(min(_READ_BLOCK, remaining))
+                            if not data:
+                                break
+                            remaining -= len(data)
+                            yield data
+
+                response = StreamingHttpResponse(
+                    _stream_slice(), status=206, content_type='video/mp4',
+                )
+                response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+                response['Accept-Ranges'] = 'bytes'
+                response['Content-Length'] = str(length)
+                return response
+
+            # Sin cabecera Range: respuesta completa servida por chunks.
+            response = FileResponse(
+                open(video_path, 'rb'), content_type='video/mp4',
+            )
+            response['Accept-Ranges'] = 'bytes'
+            response['Content-Length'] = str(file_size)
             return response
         except Exception as exc:
             return Response({'error': f'Fallo en el streaming: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -591,6 +650,38 @@ class VideoFirstFrameView(APIView):
         return _HR(buf.tobytes(), content_type='image/jpeg')
 
 
+class KeyframeView(APIView):
+    """GET: Devuelve el frame rectificado (vista cenital) que el pipeline
+    asoció a una posición concreta de un análisis, como JPEG.
+
+    Alimenta el switch "tablero reconstruido vs frame real" del frontend:
+    permite ver de qué imagen del vídeo se dedujo cada movimiento. El
+    índice 0 (posición inicial) no tiene keyframe asociado.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, analysis_id, index):
+        from django.http import HttpResponse as _HR
+
+        if _user_video_for_analysis_id(request.user, analysis_id) is None:
+            return Response({'error': 'Análisis no encontrado.'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            return Response({'error': 'Índice inválido.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        path = keyframe_path(analysis_id, idx)
+        if path is None:
+            return Response({'error': 'No hay frame para esa posición.'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        with open(path, 'rb') as f:
+            return _HR(f.read(), content_type='image/jpeg')
+
+
 class WarpedFramePreviewView(APIView):
     """POST: Devuelve el primer frame warpeado con las 4 esquinas dadas como JPEG."""
     permission_classes = [IsAuthenticated]
@@ -674,6 +765,24 @@ class EngineAnalysisView(APIView):
         return Response({'message': 'Análisis guardado.'}, status=status.HTTP_200_OK)
 
 
+class LiveSessionView(APIView):
+    """POST /api/partidas/live-session/  → emite un task_id para abrir
+    el WebSocket de análisis en directo (`/ws/live/<task_id>/`).
+
+    El identificador es un UUID v4 que actúa como capacidad: solo quien
+    ha pasado por este endpoint autenticado puede suscribirse al canal.
+    Mismo patrón que `AnalyzeVideoView` para el flujo offline.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        import uuid as _uuid
+        return Response(
+            {'task_id': str(_uuid.uuid4())},
+            status=status.HTTP_200_OK,
+        )
+
+
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_video_and_frames(request, file_name):
@@ -692,6 +801,7 @@ def delete_video_and_frames(request, file_name):
 
     analysis_id = os.path.splitext(file_name)[0]
     delete_key_frames(analysis_id)
+    delete_keyframes(analysis_id)
     delete_fens(analysis_id)
     delete_engine_analysis(analysis_id)
     video_row.delete()

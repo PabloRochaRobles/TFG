@@ -54,11 +54,11 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Botón para ir a Grabar vídeo (cámara) */}
+      {/* Botón para ir a Análisis en directo (cámara con análisis en tiempo real) */}
       <Tabs.Screen
-        name="camera"
+        name="live-analysis"
         options={{
-          title: t.tabs.camera,
+          title: t.tabs.live,
           tabBarIcon: ({ color }) => (
             <FontAwesome name="camera" size={28} color={color} />
           ),

@@ -28,6 +28,7 @@ from ..chess_tracker.pipeline import process_video as _process_video
 from ..chess_tracker.square_classifier.infer import SquareClassifierInference
 
 from .config import MODEL_PATH
+from .keyframe_persistence import save_keyframe
 from .progress import set_progress
 
 
@@ -95,6 +96,7 @@ def analyze_video(
     corners_abs: np.ndarray,
     progress_key: str,
     fens_stream_setter=None,
+    analysis_id: str | None = None,
 ) -> tuple[list[str], list, dict]:
     """Pipeline end-to-end: vídeo + 4 esquinas → (FENs, moves, stats).
 
@@ -111,6 +113,11 @@ def analyze_video(
             un movimiento. La vista la usa para empujar FENs a la caché de
             Django, desde donde el WebSocket consumer los emite al frontend
             en tiempo real.
+        analysis_id: si se proporciona, por cada jugada aceptada se guarda
+            la vista cenital rectificada del frame estable que la produjo en
+            `media/keyframes/<analysis_id>/<fen_index>.jpg`. Alimenta el
+            switch "tablero vs frame real" del frontend. Si es None no se
+            guarda nada (comportamiento previo).
 
     Returns:
         (fens, moves, stats):
@@ -140,6 +147,14 @@ def analyze_video(
             for mv in decision.moves:
                 streaming_board.push(mv)
                 streaming_fens.append(streaming_board.fen())
+                # Guardar el frame rectificado que produjo esta jugada,
+                # indexado por la posición resultante. En recuperación de
+                # 2-ply varias jugadas comparten el mismo frame estable, así
+                # que se guarda la misma imagen para cada índice resultante.
+                if analysis_id is not None:
+                    save_keyframe(
+                        analysis_id, len(streaming_fens) - 1, stable.warped,
+                    )
             if fens_stream_setter is not None:
                 fens_stream_setter(streaming_fens[:])
 

@@ -4,6 +4,7 @@ from .views import (
     VideoListView, AnalysisChainView, FensView,
     VideoFirstFrameView, AnalysisProgressView,
     EngineAnalysisView, WarpedFramePreviewView, AnalysisResultView,
+    KeyframeView, LiveSessionView,
 )
 
 urlpatterns = [
@@ -24,6 +25,8 @@ urlpatterns = [
     path('analysis-chain/',                          AnalysisChainView.as_view(),      name='analysis_chain'),
     path('fens/<str:analysis_id>/',                  FensView.as_view(),               name='fens_get'),
     path('first-frame/<str:file_name>/',             VideoFirstFrameView.as_view(),    name='first_frame'),
+    path('keyframe/<str:analysis_id>/<int:index>/',  KeyframeView.as_view(),           name='keyframe'),
+    path('live-session/',                            LiveSessionView.as_view(),        name='live_session'),
     path('engine-analysis/',                         EngineAnalysisView.as_view(),     name='engine_analysis_save'),
     path('engine-analysis/<str:analysis_id>/',       EngineAnalysisView.as_view(),     name='engine_analysis_get'),
     path('warped-preview/<str:file_name>/',          WarpedFramePreviewView.as_view(), name='warped_preview'),

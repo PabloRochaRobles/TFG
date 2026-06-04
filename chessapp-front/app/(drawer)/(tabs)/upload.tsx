@@ -28,20 +28,62 @@ import { useTheme } from '../../contexts/ThemeContext';
 // ── Compresión de vídeo ───────────────────────────────────────────────────────
 // Usa react-native-compressor si está disponible (Development Build / producción).
 // En Expo Go el require falla silenciosamente y se sube el vídeo original.
+//
+// IMPORTANTE: SIEMPRE se pasa el vídeo por `Video.compress`, aunque ya sea
+// pequeño. La razón no es solo de tamaño: el URI original que entrega el
+// picker / la cámara en Android suele ser un `content://` que el
+// `XMLHttpRequest` de `uploadVideo` no puede transmitir de forma fiable
+// (se subía un fichero truncado de ~28 bytes, sin `moov` atom, y el
+// backend lo rechazaba). `Video.compress` devuelve siempre un `file://`
+// real en la caché de la app, que sí se sube correctamente. Por tanto la
+// compresión cumple aquí una doble función: reducir tamaño y normalizar
+// el contenedor a un fichero subible.
+//
+// Se usa modo `auto`. Se probó `manual` (720p / 800 kbps) para acelerar
+// el encode, pero en algunos dispositivos Android react-native-compressor
+// en modo `manual` produce un MP4 vacío de 28 bytes (solo la cabecera
+// `ftyp`, sin pista de vídeo), que el backend rechaza con "moov atom not
+// found". El modo `auto` es más lento pero genera ficheros válidos de
+// forma fiable, que es el requisito prioritario.
 async function compressVideoSafe(
   uri: string,
   onProgress: (pct: number) => void,
 ): Promise<string> {
+  console.log('[compress] URI de entrada:', uri);
+
+  // 1. Cargar el módulo nativo. Si esto falla, el build no lo incluye
+  //    (típico de Expo Go). Lo distinguimos del fallo de compresión.
+  let Video: any;
   try {
-    const { Video } = require('react-native-compressor');
-    return await Video.compress(
+    Video = require('react-native-compressor').Video;
+  } catch (e) {
+    console.warn('[compress] react-native-compressor NO disponible en este build:', e);
+    // No tenemos forma de normalizar el contenedor; subir el URI tal cual
+    // (puede funcionar si ya es un file:// legible).
+    return uri;
+  }
+
+  // 2. Comprimir. Si esto lanza, NO subimos un fichero potencialmente
+  //    corrupto en silencio: propagamos el error para que el usuario lo
+  //    vea y quede registrado en la consola de Metro.
+  try {
+    const out = await Video.compress(
       uri,
-      { compressionMethod: 'auto', maxSize: 1280, bitrate: 1_500_000 },
+      {
+        compressionMethod: 'auto',
+        maxSize: 1280,
+        bitrate: 1_500_000,
+      },
       (progress: number) => onProgress(Math.round(progress * 100)),
     );
-  } catch {
-    // Módulo no disponible (Expo Go) → subir sin comprimir
-    return uri;
+    console.log('[compress] OK, fichero comprimido:', out);
+    return out;
+  } catch (e) {
+    console.error('[compress] Video.compress falló:', e);
+    throw new Error(
+      'No se pudo procesar el vídeo para la subida. ' +
+      'Detalle: ' + (e instanceof Error ? e.message : String(e)),
+    );
   }
 }
 
@@ -211,7 +253,7 @@ export default function UploadScreen() {
 
   const navigation = useNavigation();
   const router = useRouter();
-  const { cameraUri, preloaded } = useLocalSearchParams<{ cameraUri?: string; preloaded?: string }>();
+  const { preloaded } = useLocalSearchParams<{ preloaded?: string }>();
 
   // Ref para saber si la pantalla se abrió desde la librería con un vídeo ya subido
   const preloadedRef = useRef<string | null>(null);
@@ -221,16 +263,6 @@ export default function UploadScreen() {
   const t = useTranslation();
 
   const player = useVideoPlayer('', (p) => { p.loop = true; });
-
-  // Cuando se llega desde la pantalla de cámara con un vídeo recién grabado
-  useEffect(() => {
-    if (cameraUri) {
-      setVideoUri(cameraUri);
-      setVideoFileName('grabacion.mp4');
-      setSavedFileName(null);
-      setPhase('idle');
-    }
-  }, [cameraUri]);
 
   // Cuando se llega desde la librería con un vídeo ya subido, saltar directo a calibración
   useEffect(() => {

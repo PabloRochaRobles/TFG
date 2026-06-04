@@ -25,6 +25,10 @@ ENGINES_DIR              = os.path.join(settings.BASE_DIR, 'misc', 'engines')
 DEBUG_LOCATION           = os.path.join(settings.MEDIA_ROOT, 'debug')
 FENS_LOCATION            = os.path.join(settings.MEDIA_ROOT, 'fens')
 ENGINE_ANALYSIS_LOCATION = os.path.join(settings.MEDIA_ROOT, 'engine_analysis')
+# Frames clave rectificados (vista cenital) que el pipeline asocia a cada
+# jugada. Se guardan como media/keyframes/<analysis_id>/<fen_index>.jpg y
+# alimentan el switch "tablero vs frame real" de la pantalla de análisis.
+KEYFRAMES_LOCATION       = os.path.join(settings.MEDIA_ROOT, 'keyframes')
 
 # Modelo EfficientNet-B0 exportado a ONNX para inferencia con `onnxruntime`
 # (huella RAM ~250 MB menor que torch+torchvision; necesario para Render Free).
@@ -46,5 +50,5 @@ NORMALIZED_SIZE = 1000
 __all__ = [
     'TEMP_VIDEOS_LOCATION', 'TEMP_FRAMES_LOCATION', 'ENGINES_DIR',
     'DEBUG_LOCATION', 'FENS_LOCATION', 'ENGINE_ANALYSIS_LOCATION',
-    'MODEL_PATH', 'NORMALIZED_SIZE',
+    'KEYFRAMES_LOCATION', 'MODEL_PATH', 'NORMALIZED_SIZE',
 ]

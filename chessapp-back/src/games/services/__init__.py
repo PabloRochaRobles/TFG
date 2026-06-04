@@ -40,9 +40,19 @@ from .effnet_adapter import analyze_video  # noqa: F401
 # Persistencia en disco de la lista de FENs — ver services/fen_persistence.py
 from .fen_persistence import save_fens, load_fens, delete_fens  # noqa: F401
 
+# Persistencia de frames clave rectificados — ver services/keyframe_persistence.py
+from .keyframe_persistence import (  # noqa: F401
+    save_keyframe, keyframe_path, delete_keyframes,
+)
+
 # Análisis con motores UCI — ver services/engine_analysis.py
 from .engine_analysis import (  # noqa: F401
     save_engine_analysis, load_engine_analysis, delete_engine_analysis,
     analysis_best_posStockfish, analysis_best_posObsidian, analysis_best_posPlentyChess,
     analysis_engines_parallel, consensus_analysis,
 )
+
+# Sesión de análisis en directo (cámara en tiempo real) — ver
+# services/live_analyzer.py. Es una vía paralela al `analyze_video`
+# del flujo offline; ese sigue funcionando sin cambios.
+from .live_analyzer import LiveSession  # noqa: F401

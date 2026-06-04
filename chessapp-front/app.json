@@ -50,7 +50,15 @@
       ],
       "expo-video",
       "expo-secure-store",
-      "react-native-compressor"
+      "react-native-compressor",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
