@@ -28,8 +28,8 @@ export const WS_BASE_URL = LOCAL_MODE
 // La cabecera `Authorization: Bearer <jwt>` la añade automáticamente
 // `apiFetch`. `uploadVideo` la añade a mano porque usa XHR (para tener
 // progreso de subida) y no puede pasar por `apiFetch`.
-import { apiFetch } from '@/app/lib/apiFetch';
-import { tokenStore } from '@/app/lib/tokenStorage';
+import { apiFetch } from '@/lib/apiFetch';
+import { tokenStore } from '@/lib/tokenStorage';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -446,8 +446,13 @@ export type LiveEvent =
   | { type: 'frame_result';
       decision: LiveDecision;
       score?: number; margin?: number; no_move_score?: number;
-      moves?: string[]; fen?: string; index?: number }
-  | { type: 'fen_ready';    fen: string; uci_moves: string[]; index: number }
+      moves?: string[]; fens?: string[]; fen?: string; index?: number }
+  | { type: 'fen_ready';    fen: string; fens?: string[]; uci_moves: string[]; index: number }
+  | { type: 'engine_ready';
+      index: number; fen: string; score: number;
+      best_move_san: string; best_move_uci: string; full_agreement: boolean;
+      engines: { stockfish: EngineResult; obsidian: EngineResult; plentychess: EngineResult } }
+  | { type: 'engine_error'; index: number; fen: string; error: string }
   | { type: 'error';        error: string };
 
 /**

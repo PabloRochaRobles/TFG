@@ -17,7 +17,7 @@
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 
 import { API_BASE_URL } from '@/constants/api';
-import { tokenStore }   from '@/app/lib/tokenStorage';
+import { tokenStore }   from '@/lib/tokenStorage';
 
 type AuthState = {
   email:           string | null;

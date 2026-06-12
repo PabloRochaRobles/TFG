@@ -10,7 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Clipboard, Dimensions, Image, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const LAST_GAME_KEY = 'lastGame';
 
@@ -375,6 +375,17 @@ export default function AnalysisScreen() {
     Alert.alert(t.analysis.copied, t.analysis.copiedMessage);
   };
 
+  const currentPositionAnalysis = engineAnalysis[currentMove];
+  const currentEvalStep = currentPositionAnalysis
+    ? (currentPositionAnalysis.chain ?? []).find((step) => step.engines != null)
+    : undefined;
+  const currentEvalScore = currentEvalStep ? computeScore(currentEvalStep) : 0;
+  const evalWhitePercent = Math.max(4, Math.min(96, 50 + currentEvalScore * 10));
+  const evalLabel = currentEvalStep
+    ? `${currentEvalScore > 0 ? '+' : ''}${currentEvalScore.toFixed(2)}`
+    : '...';
+  const evalLabelOnTop = currentEvalScore < 0;
+
   return (
     <>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -498,6 +509,27 @@ export default function AnalysisScreen() {
 
               {/* Tablero reconstruido o frame real del vídeo */}
               <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
+                <View style={styles.boardWithEval}>
+                  <View style={styles.evalBar}>
+                    <View style={[styles.blackEval, { height: `${100 - evalWhitePercent}%` }]} />
+                    <View style={[styles.whiteEval, { height: `${evalWhitePercent}%` }]} />
+                    <View style={[
+                      styles.evalLabelWrap,
+                      evalLabelOnTop ? styles.evalLabelTop : styles.evalLabelBottom,
+                    ]}>
+                      <Text
+                        style={[
+                          styles.evalLabel,
+                          { color: evalLabelOnTop ? '#fff' : '#111827' },
+                        ]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
+                      >
+                        {evalLabel}
+                      </Text>
+                    </View>
+                  </View>
                 {showRealFrame && !isFenMode && !isLiveMode ? (
                   <View style={styles.chessBoard}>
                     {keyframeLoading ? (
@@ -560,6 +592,7 @@ export default function AnalysisScreen() {
 
                 {/* Switch: tablero vs frame real (solo cuando hay vídeo de
                     origen; oculto en modo FEN y en modo directo). */}
+                </View>
                 {!isFenMode && !isLiveMode && (
                   <View style={styles.frameSwitchRow}>
                     <Ionicons
@@ -752,7 +785,8 @@ export default function AnalysisScreen() {
 }
 
 // Tamaño del tablero ajustado al múltiplo de 8 más cercano para evitar artefactos sub-píxel
-const BOARD_SIZE = Math.floor((Dimensions.get('window').width - 40 - 24) / 8) * 8;
+const EVAL_BAR_W = 46;
+const BOARD_SIZE = Math.floor((Dimensions.get('window').width - 40 - 24 - EVAL_BAR_W) / 8) * 8;
 const CELL_SIZE  = BOARD_SIZE / 8;
 
 const styles = StyleSheet.create({
@@ -865,6 +899,36 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     alignItems: 'center',
     gap: 10,
+  },
+  boardWithEval: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  evalBar: {
+    width: 38,
+    height: BOARD_SIZE,
+    borderRadius: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#4b5563',
+    backgroundColor: '#111827',
+  },
+  blackEval: { width: '100%', backgroundColor: '#111827' },
+  whiteEval: { width: '100%', backgroundColor: '#f9fafb' },
+  evalLabelWrap: {
+    position: 'absolute',
+    left: 2,
+    right: 2,
+    paddingVertical: 3,
+    alignItems: 'center',
+  },
+  evalLabelTop: { top: 6 },
+  evalLabelBottom: { bottom: 6 },
+  evalLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   chessBoard: {
     width: BOARD_SIZE,

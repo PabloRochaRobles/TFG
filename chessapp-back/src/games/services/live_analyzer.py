@@ -104,11 +104,14 @@ class LiveSession:
         else:
             out['decision'] = 'move'
             applied_uci: list[str] = []
+            applied_fens: list[str] = []
             for m in result.moves:
                 self.board.push(m)
                 self.fens.append(self.board.fen())
                 applied_uci.append(m.uci())
+                applied_fens.append(self.board.fen())
             out['moves'] = applied_uci
+            out['fens'] = applied_fens
             out['fen'] = self.board.fen()
             out['index'] = len(self.fens) - 1
             self._last_warped_gray = gray

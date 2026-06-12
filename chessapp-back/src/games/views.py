@@ -58,6 +58,21 @@ fs_frame = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'temp_fr
 CACHE_TTL = 3600
 
 _LOGS_DIR = os.path.join(settings.MEDIA_ROOT, 'debug', 'logs')
+_THUMBNAILS_DIR = os.path.join(settings.MEDIA_ROOT, 'thumbnails')
+
+
+def _thumbnail_path(file_name: str) -> str:
+    base, _ = os.path.splitext(os.path.basename(file_name))
+    return os.path.join(_THUMBNAILS_DIR, f'{base}.jpg')
+
+
+def _delete_thumbnail(file_name: str) -> None:
+    path = _thumbnail_path(file_name)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 class _TeeStream(io.TextIOBase):
@@ -488,18 +503,46 @@ class VideoStreamView(APIView):
 
             file_size = os.path.getsize(video_path)
             range_header = request.headers.get('Range', '').strip()
-            range_match = _re.match(r'bytes=(\d+)-(\d*)', range_header or '')
+            range_match = _re.match(r'bytes=(\d*)-(\d*)$', range_header or '')
 
             if range_match:
-                start = int(range_match.group(1))
-                requested_end = (
-                    int(range_match.group(2)) if range_match.group(2)
-                    else file_size - 1
-                )
-                start = max(0, min(start, file_size - 1))
-                # Limitar el tramo realmente devuelto (HTTP permite servir
-                # menos de lo pedido si Content-Range lo refleja).
-                end = min(requested_end, file_size - 1, start + _RANGE_CHUNK - 1)
+                start_s, end_s = range_match.groups()
+                if not start_s and not end_s:
+                    response = Response(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                    response['Content-Range'] = f'bytes */{file_size}'
+                    return response
+
+                if start_s:
+                    start = int(start_s)
+                    if start >= file_size:
+                        response = Response(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                        response['Content-Range'] = f'bytes */{file_size}'
+                        return response
+                    if end_s:
+                        end = min(int(end_s), file_size - 1)
+                    else:
+                        # Rango abierto ("bytes=0-"): devolver un bloque
+                        # acotado para que el reproductor pueda empezar
+                        # pronto y pedir más tramos progresivamente.
+                        end = min(file_size - 1, start + _RANGE_CHUNK - 1)
+                else:
+                    # Rango sufijo ("bytes=-65536"): ExoPlayer/AVPlayer lo
+                    # usan para leer el final del MP4 cuando el moov atom no
+                    # está al principio. Antes caía al caso sin Range y se
+                    # enviaba el fichero completo, causando esperas largas.
+                    suffix_len = int(end_s)
+                    if suffix_len <= 0:
+                        response = Response(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                        response['Content-Range'] = f'bytes */{file_size}'
+                        return response
+                    start = max(file_size - suffix_len, 0)
+                    end = file_size - 1
+
+                if end < start:
+                    response = Response(status=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE)
+                    response['Content-Range'] = f'bytes */{file_size}'
+                    return response
+
                 length = end - start + 1
 
                 def _stream_slice():
@@ -630,7 +673,6 @@ class VideoFirstFrameView(APIView):
 
     def get(self, request, file_name):
         import cv2 as _cv2
-        from django.http import HttpResponse as _HR
 
         if _user_video_for_file(request.user, file_name) is None:
             return Response({'error': 'Vídeo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
@@ -638,6 +680,15 @@ class VideoFirstFrameView(APIView):
         video_path = fs_video.path(file_name)
         if not os.path.exists(video_path):
             return Response({'error': 'Vídeo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        thumb_path = _thumbnail_path(file_name)
+        if (
+            os.path.exists(thumb_path)
+            and os.path.getmtime(thumb_path) >= os.path.getmtime(video_path)
+        ):
+            response = FileResponse(open(thumb_path, 'rb'), content_type='image/jpeg')
+            response['Cache-Control'] = 'private, max-age=86400'
+            return response
 
         frame = get_first_frame(video_path)
         if frame is None:
@@ -647,7 +698,15 @@ class VideoFirstFrameView(APIView):
         if not ret:
             return Response({'error': 'Error al codificar el frame.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return _HR(buf.tobytes(), content_type='image/jpeg')
+        os.makedirs(_THUMBNAILS_DIR, exist_ok=True)
+        tmp_path = f'{thumb_path}.tmp'
+        with open(tmp_path, 'wb') as f:
+            f.write(buf.tobytes())
+        os.replace(tmp_path, thumb_path)
+
+        response = FileResponse(open(thumb_path, 'rb'), content_type='image/jpeg')
+        response['Cache-Control'] = 'private, max-age=86400'
+        return response
 
 
 class KeyframeView(APIView):
@@ -804,6 +863,7 @@ def delete_video_and_frames(request, file_name):
     delete_keyframes(analysis_id)
     delete_fens(analysis_id)
     delete_engine_analysis(analysis_id)
+    _delete_thumbnail(file_name)
     video_row.delete()
 
     return Response({'message': 'Proceso de eliminación completado.'}, status=status.HTTP_200_OK)

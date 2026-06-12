@@ -27,6 +27,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -38,11 +39,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ChessPiece from '@/components/ChessPiece';
 import {
-  createLiveSession, openLiveAnalysisWS, type LiveEvent,
+  createLiveSession, openLiveAnalysisWS, type EngineResult, type LiveEvent,
 } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 // ── Configuración ────────────────────────────────────────────────────────────
 const CAPTURE_INTERVAL_MS = 2000;   // periodicidad del envío de frames
@@ -61,6 +62,15 @@ const CORNER_ORDER = [
 
 type RelCorner = [number, number];   // coords relativas 0-1 sobre la imagen
 type Stage = 'preview' | 'calibrating' | 'live' | 'stopped';
+type LiveEngineAnalysis = {
+  index: number;
+  fen: string;
+  score: number;
+  best_move_san: string;
+  best_move_uci: string;
+  full_agreement: boolean;
+  engines: { stockfish: EngineResult; obsidian: EngineResult; plentychess: EngineResult };
+};
 
 // ── Tablero ──────────────────────────────────────────────────────────────────
 function fenToBoard(fen: string): string[][] {
@@ -76,7 +86,8 @@ function fenToBoard(fen: string): string[][] {
 }
 
 const SCREEN_W   = Dimensions.get('window').width;
-const BOARD_SIZE = Math.floor((SCREEN_W - 40 - 24) / 8) * 8;
+const EVAL_BAR_W = 46;
+const BOARD_SIZE = Math.floor((SCREEN_W - 40 - 24 - EVAL_BAR_W) / 8) * 8;
 const CELL_SIZE  = BOARD_SIZE / 8;
 const PIECE_RATIO = 0.85;
 
@@ -119,8 +130,10 @@ export default function LiveAnalysisScreen() {
 
   // Estado de la sesión en directo
   const [fens, setFens]               = useState<string[]>([]);
-  const [stats, setStats]             = useState<Record<string, number>>({});
-  const [lastDecision, setLastDecision] = useState<string>('');
+  const [, setStats]             = useState<Record<string, number>>({});
+  const [, setLastDecision] = useState<string>('');
+  const [engineByIndex, setEngineByIndex] = useState<Record<number, LiveEngineAnalysis>>({});
+  const [lastEngineError, setLastEngineError] = useState<string>('');
   const [isStarting, setIsStarting]   = useState(false);
   const wsRef = useRef<ReturnType<typeof openLiveAnalysisWS> | null>(null);
   const captureBusyRef = useRef(false);
@@ -139,11 +152,30 @@ export default function LiveAnalysisScreen() {
       setFens([ev.fen]);
       setStats({});
       setLastDecision('');
+      setEngineByIndex({});
+      setLastEngineError('');
     } else if (ev.type === 'frame_result') {
       setLastDecision(ev.decision);
       setStats(prev => ({ ...prev, [ev.decision]: (prev[ev.decision] ?? 0) + 1 }));
     } else if (ev.type === 'fen_ready') {
-      setFens(prev => [...prev, ev.fen]);
+      const nextFens = ev.fens?.length ? ev.fens : [ev.fen];
+      setFens(prev => [...prev, ...nextFens]);
+    } else if (ev.type === 'engine_ready') {
+      setEngineByIndex(prev => ({
+        ...prev,
+        [ev.index]: {
+          index: ev.index,
+          fen: ev.fen,
+          score: ev.score,
+          best_move_san: ev.best_move_san,
+          best_move_uci: ev.best_move_uci,
+          full_agreement: ev.full_agreement,
+          engines: ev.engines,
+        },
+      }));
+      setLastEngineError('');
+    } else if (ev.type === 'engine_error') {
+      setLastEngineError(ev.error);
     } else if (ev.type === 'error') {
       Alert.alert('Sesión en directo', ev.error);
     }
@@ -192,13 +224,14 @@ export default function LiveAnalysisScreen() {
         quality: CAPTURE_QUALITY,
         base64: false,
         skipProcessing: true,
+        shutterSound: false,
       } as any) as unknown as CapturedPhoto;
       if (!photo?.uri) return;
       setSnapshot({ uri: photo.uri, w: photo.width ?? 0, h: photo.height ?? 0 });
       setCorners([]);
       resetZoom();
       setStage('calibrating');
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'No se pudo capturar el fotograma.');
     }
   };
@@ -314,6 +347,7 @@ export default function LiveAnalysisScreen() {
         quality: CAPTURE_QUALITY,
         base64: false,
         skipProcessing: true,
+        shutterSound: false,
       } as any) as unknown as CapturedPhoto;
       if (!photo?.uri) return;
       // Convertir el fichero JPEG en disco a ArrayBuffer y enviarlo binario.
@@ -364,12 +398,27 @@ export default function LiveAnalysisScreen() {
     setFens([]);
     setStats({});
     setLastDecision('');
+    setEngineByIndex({});
+    setLastEngineError('');
     setStage('preview');
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
   const currentFen = fens.length > 0 ? fens[fens.length - 1] : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   const board = fenToBoard(currentFen);
+  const currentIndex = Math.max(0, fens.length - 1);
+  const currentEngine = engineByIndex[currentIndex];
+  const evalScore = currentEngine?.score ?? 0;
+  const whitePercent = Math.max(4, Math.min(96, 50 + evalScore * 10));
+  const evalLabel = currentEngine
+    ? `${evalScore > 0 ? '+' : ''}${evalScore.toFixed(2)}`
+    : '...';
+  const evalLabelOnTop = evalScore < 0;
+  const engineRows = [
+    { key: 'stockfish', name: 'Stockfish', move: currentEngine?.engines.stockfish.san },
+    { key: 'obsidian', name: 'Obsidian', move: currentEngine?.engines.obsidian.san },
+    { key: 'plentychess', name: 'PlentyChess', move: currentEngine?.engines.plentychess.san },
+  ];
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.headerBg }]} edges={['top']}>
@@ -383,13 +432,22 @@ export default function LiveAnalysisScreen() {
         <Text style={[styles.headerTitle, { color: colors.headerText }]}>{t.live.title}</Text>
       </View>
 
-      <View style={[styles.content, { backgroundColor: colors.background }]}>
+      <ScrollView
+        style={[styles.contentScroll, { backgroundColor: colors.background }]}
+        contentContainerStyle={styles.content}
+        scrollEnabled={stage !== 'calibrating'}
+      >
 
         {/* ── Etapa: vista previa de la cámara ── */}
         {stage === 'preview' && (
           <>
             <View style={styles.cameraWrapper}>
-              <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} mode="picture" />
+              <CameraView
+                ref={cameraRef}
+                style={StyleSheet.absoluteFill}
+                mode="picture"
+                animateShutter={false}
+              />
             </View>
             <Text style={[styles.hint, { color: colors.textSecondary }]}>{t.live.previewHint}</Text>
             <TouchableOpacity
@@ -514,41 +572,72 @@ export default function LiveAnalysisScreen() {
                 <Text style={styles.liveBadgeText}>{t.live.recording}</Text>
               </View>
             )}
-            {/* Cámara oculta detrás para que takePictureAsync siga funcionando */}
+            {/* Vista en vivo de la cámara; se usa también para capturar los frames enviados al backend. */}
             {stage === 'live' && (
-              <View style={styles.cameraHidden}>
-                <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} mode="picture" />
+              <View style={styles.liveCameraWrapper}>
+                <CameraView
+                  ref={cameraRef}
+                  style={StyleSheet.absoluteFill}
+                  mode="picture"
+                  animateShutter={false}
+                />
               </View>
             )}
             <View style={[styles.boardContainer, { backgroundColor: colors.card }]}>
-              <View style={styles.chessBoard}>
-                {board.map((row, rowIdx) => (
-                  <View key={rowIdx} style={styles.boardRow}>
-                    {row.map((piece, colIdx) => {
-                      const isLight = (rowIdx + colIdx) % 2 === 0;
-                      return (
-                        <View key={colIdx} style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}>
-                          {piece !== '' && (
-                            <ChessPiece piece={piece} size={Math.floor(CELL_SIZE * PIECE_RATIO)} />
-                          )}
-                        </View>
-                      );
-                    })}
+              <View style={styles.boardWithEval}>
+                <View style={styles.evalBar}>
+                  <View style={[styles.blackEval, { height: `${100 - whitePercent}%` }]} />
+                  <View style={[styles.whiteEval, { height: `${whitePercent}%` }]} />
+                  <View style={[
+                    styles.evalLabelWrap,
+                    evalLabelOnTop ? styles.evalLabelTop : styles.evalLabelBottom,
+                  ]}>
+                    <Text
+                      style={[
+                        styles.evalLabel,
+                        { color: evalLabelOnTop ? '#fff' : '#111827' },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {evalLabel}
+                    </Text>
                   </View>
-                ))}
+                </View>
+                <View style={styles.chessBoard}>
+                  {board.map((row, rowIdx) => (
+                    <View key={rowIdx} style={styles.boardRow}>
+                      {row.map((piece, colIdx) => {
+                        const isLight = (rowIdx + colIdx) % 2 === 0;
+                        return (
+                          <View key={colIdx} style={[styles.square, isLight ? styles.lightSquare : styles.darkSquare]}>
+                            {piece !== '' && (
+                              <ChessPiece piece={piece} size={Math.floor(CELL_SIZE * PIECE_RATIO)} />
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
-            <View style={[styles.statsBox, { backgroundColor: colors.card }]}>
-              <Text style={[styles.statsTitle, { color: colors.text }]}>{t.live.statsTitle}</Text>
-              <Text style={[styles.statsLine, { color: colors.textSecondary }]}>
-                {t.live.movesDetected}: {Math.max(0, fens.length - 1)}
-              </Text>
-              <Text style={[styles.statsLine, { color: colors.textSecondary }]}>
-                {t.live.lastDecision}: {lastDecision || '—'}
-              </Text>
-              <Text style={[styles.statsLine, { color: colors.textSecondary }]}>
-                {Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join('   ')}
-              </Text>
+            <View style={[styles.enginePanel, { backgroundColor: colors.card }]}>
+              <Text style={[styles.engineTitle, { color: colors.text }]}>Mejor Jugada</Text>
+              {engineRows.map((engine) => (
+                <View key={engine.key} style={[styles.engineRow, { borderColor: colors.border }]}>
+                  <Text style={[styles.engineName, { color: colors.text }]}>{engine.name}</Text>
+                  <Text style={[styles.engineMove, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {engine.move ?? 'calculando...'}
+                  </Text>
+                </View>
+              ))}
+              {lastEngineError ? (
+                <Text style={[styles.engineError, { color: '#ef4444' }]}>
+                  Motor: {lastEngineError}
+                </Text>
+              ) : null}
             </View>
             {stage === 'live' ? (
               <TouchableOpacity
@@ -581,7 +670,7 @@ export default function LiveAnalysisScreen() {
           </>
         )}
 
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -593,7 +682,8 @@ const styles = StyleSheet.create({
     height: 60, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, gap: 12,
   },
   headerTitle: { fontSize: 22, fontWeight: 'bold' },
-  content: { flex: 1, padding: 20, gap: 14 },
+  contentScroll: { flex: 1 },
+  content: { flexGrow: 1, padding: 20, gap: 14 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
   permissionText: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
   permissionBtn: { paddingHorizontal: 28, paddingVertical: 12, borderRadius: 12, marginTop: 8 },
@@ -602,7 +692,9 @@ const styles = StyleSheet.create({
   cameraWrapper: {
     width: '100%', aspectRatio: 16 / 9, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000',
   },
-  cameraHidden: { width: 1, height: 1, opacity: 0, overflow: 'hidden' },
+  liveCameraWrapper: {
+    width: '100%', aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000',
+  },
   hint: { fontSize: 13, textAlign: 'center' },
 
   primaryBtn: {
@@ -655,6 +747,23 @@ const styles = StyleSheet.create({
     borderRadius: 12, padding: 12, alignItems: 'center', elevation: 3,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3.84,
   },
+  boardWithEval: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
+  evalBar: {
+    width: 38, height: BOARD_SIZE, borderRadius: 6, overflow: 'hidden',
+    borderWidth: 1, borderColor: '#4b5563', backgroundColor: '#111827',
+  },
+  blackEval: { width: '100%', backgroundColor: '#111827' },
+  whiteEval: { width: '100%', backgroundColor: '#f9fafb' },
+  evalLabelWrap: {
+    position: 'absolute', left: 2, right: 2,
+    paddingVertical: 3,
+    alignItems: 'center',
+  },
+  evalLabelTop: { top: 6 },
+  evalLabelBottom: { bottom: 6 },
+  evalLabel: { fontSize: 11, fontWeight: '800', textAlign: 'center' },
   chessBoard: {
     width: BOARD_SIZE, height: BOARD_SIZE, borderWidth: 2, borderColor: '#4b5563',
     borderRadius: 8, overflow: 'hidden',
@@ -664,7 +773,13 @@ const styles = StyleSheet.create({
   lightSquare: { backgroundColor: '#f0d9b5' },
   darkSquare:  { backgroundColor: '#b58863' },
 
-  statsBox: { borderRadius: 10, padding: 12, gap: 4 },
-  statsTitle: { fontSize: 14, fontWeight: 'bold' },
-  statsLine:  { fontSize: 12 },
+  enginePanel: { borderRadius: 10, padding: 12, gap: 8 },
+  engineTitle: { fontSize: 14, fontWeight: 'bold' },
+  engineRow: {
+    minHeight: 38, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+  },
+  engineName: { fontSize: 13, fontWeight: '700', flexShrink: 0 },
+  engineMove: { fontSize: 13, fontWeight: '600', flex: 1, textAlign: 'right' },
+  engineError: { fontSize: 12 },
 });

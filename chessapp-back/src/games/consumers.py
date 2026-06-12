@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 
+from django.conf import settings
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,10 @@ class LiveAnalysisConsumer(AsyncWebsocketConsumer):
             await self.close(code=4001)
             return
         self.session = None
+        self._engine_tasks = set()
+        self._engine_cache = {}
+        self._engine_lock = asyncio.Lock()
+        self._engines_unavailable_sent = False
         await self.accept()
         logger.info("[LIVE] Cliente conectado, task_id=%s", self.task_id)
 
@@ -199,6 +204,9 @@ class LiveAnalysisConsumer(AsyncWebsocketConsumer):
         # Libera la referencia a la sesión y permite al GC recoger el
         # frame rectificado almacenado en memoria.
         self.session = None
+        for task in getattr(self, '_engine_tasks', set()):
+            task.cancel()
+        self._engine_tasks = set()
 
     async def receive(self, text_data=None, bytes_data=None):
         if text_data is not None:
@@ -265,6 +273,7 @@ class LiveAnalysisConsumer(AsyncWebsocketConsumer):
             'type': 'ready',
             'fen':  self.session.board.fen(),
         })
+        self._schedule_engine_analysis(self.session.board.fen(), 0)
         logger.info("[LIVE] Sesión inicializada (task_id=%s)", self.task_id)
 
     # ------------------------------------------------------------------
@@ -296,6 +305,96 @@ class LiveAnalysisConsumer(AsyncWebsocketConsumer):
             await self._safe_send({
                 'type':      'fen_ready',
                 'fen':       result['fen'],
+                'fens':      result.get('fens', [result['fen']]),
                 'uci_moves': result['moves'],
                 'index':     result['index'],
             })
+            ready_fens = result.get('fens', [result['fen']])
+            first_index = result['index'] - len(ready_fens) + 1
+            for offset, fen in enumerate(ready_fens):
+                self._schedule_engine_analysis(fen, first_index + offset)
+
+    # ------------------------------------------------------------------
+    # Analisis UCI incremental
+    # ------------------------------------------------------------------
+
+    def _schedule_engine_analysis(self, fen: str, index: int):
+        if not getattr(settings, 'ENABLE_ENGINES', True):
+            if not self._engines_unavailable_sent:
+                self._engines_unavailable_sent = True
+                task = asyncio.create_task(self._safe_send({
+                    'type': 'engine_error',
+                    'index': index,
+                    'fen': fen,
+                    'error': 'Motores UCI no disponibles en este despliegue.',
+                }))
+                self._engine_tasks.add(task)
+                task.add_done_callback(self._engine_tasks.discard)
+            return
+
+        if fen in self._engine_cache:
+            task = asyncio.create_task(self._safe_send({
+                'type': 'engine_ready',
+                'index': index,
+                'fen': fen,
+                **self._engine_cache[fen],
+            }))
+        else:
+            task = asyncio.create_task(self._run_engine_analysis(fen, index))
+
+        self._engine_tasks.add(task)
+        task.add_done_callback(self._engine_tasks.discard)
+
+    async def _run_engine_analysis(self, fen: str, index: int):
+        try:
+            async with self._engine_lock:
+                payload = await asyncio.to_thread(self._analyze_fen_once, fen)
+            self._engine_cache[fen] = payload
+            await self._safe_send({
+                'type': 'engine_ready',
+                'index': index,
+                'fen': fen,
+                **payload,
+            })
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[LIVE] Error analizando motor (index=%s): %s", index, exc)
+            await self._safe_send({
+                'type': 'engine_error',
+                'index': index,
+                'fen': fen,
+                'error': f'{type(exc).__name__}: {exc}',
+            })
+
+    @staticmethod
+    def _analyze_fen_once(fen: str) -> dict:
+        from .services.engine_analysis import analysis_engines_parallel, consensus_analysis
+
+        stock, obsidian, plenty = analysis_engines_parallel(fen)
+        consensus = consensus_analysis(stock, obsidian, plenty, fen)
+        return {
+            'score': stock['score'],
+            'best_move_san': consensus['movement_san'],
+            'best_move_uci': consensus['movement_uci'],
+            'full_agreement': (
+                stock['movement_uci'] == obsidian['movement_uci'] == plenty['movement_uci']
+            ),
+            'engines': {
+                'stockfish': {
+                    'san': stock['movement_san'],
+                    'uci': stock['movement_uci'],
+                    'score': stock['score'],
+                },
+                'obsidian': {
+                    'san': obsidian['movement_san'],
+                    'uci': obsidian['movement_uci'],
+                    'score': obsidian['score'],
+                },
+                'plentychess': {
+                    'san': plenty['movement_san'],
+                    'uci': plenty['movement_uci'],
+                    'score': plenty['score'],
+                },
+            },
+        }

@@ -3,7 +3,7 @@ import { useTranslation } from '@/hooks/use-translation';
 import { FontAwesome } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();

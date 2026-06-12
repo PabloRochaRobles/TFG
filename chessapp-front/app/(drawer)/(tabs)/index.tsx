@@ -1,12 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
-import { API_BASE_URL, listVideos } from '@/constants/api';
+import { listVideos } from '@/constants/api';
+import VideoPreview from '@/components/VideoPreview';
 import { FontAwesome, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,8 +17,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { tokenStore } from '../../lib/tokenStorage';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const LAST_GAME_KEY = 'lastGame';
 
@@ -30,7 +29,6 @@ type LastGameData = {
 };
 
 // ── Tarjeta de la última partida ─────────────────────────────────────────────
-// Componente separado para poder usar el hook useVideoPlayer sin condiciones.
 type LastGameCardProps = {
   game: LastGameData;
   isAnalyzed: boolean;
@@ -41,29 +39,10 @@ function LastGameCard({ game, isAnalyzed, onPress }: LastGameCardProps) {
   const colors = useThemeColors();
   const t = useTranslation();
 
-  // El stream del vídeo requiere JWT en el backend; expo-video acepta
-  // headers en la fuente, así que añadimos Authorization manualmente.
-  const access = tokenStore.getAccess();
-  const player = useVideoPlayer(
-    {
-      uri: `${API_BASE_URL}/api/partidas/stream/${game.file}/`,
-      headers: {
-        'ngrok-skip-browser-warning': 'true',
-        ...(access ? { Authorization: `Bearer ${access}` } : {}),
-      },
-    },
-    (p) => { p.loop = false; },
-  );
-
   return (
     <View style={[styles.gameCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
       {/* Miniatura de vídeo */}
-      <VideoView
-        player={player}
-        style={styles.gameVideo}
-        allowsFullscreen
-        allowsPictureInPicture={false}
-      />
+      <VideoPreview fileName={game.file} style={styles.gameVideo} />
 
       {/* Badge de estado + metadatos */}
       <View style={styles.cardMeta}>

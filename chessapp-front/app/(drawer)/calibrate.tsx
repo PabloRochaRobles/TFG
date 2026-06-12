@@ -20,10 +20,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getFirstFrameUrl, listVideos } from '../../constants/api';
 
 const CORNER_ORDER = [
-  { key: 'TL', square: 'a1', label: 'Superior-Izq  (a1)', color: '#22c55e' },
-  { key: 'TR', square: 'a8', label: 'Superior-Der  (a8)', color: '#f97316' },
-  { key: 'BR', square: 'h8', label: 'Inferior-Der  (h8)', color: '#ef4444' },
-  { key: 'BL', square: 'h1', label: 'Inferior-Izq  (h1)', color: '#3b82f6' },
+  { key: 'TL', square: 'a1', color: '#22c55e' },
+  { key: 'TR', square: 'a8', color: '#f97316' },
+  { key: 'BR', square: 'h8', color: '#ef4444' },
+  { key: 'BL', square: 'h1', color: '#3b82f6' },
 ];
 
 type Corner = [number, number]; // relative [0-1]
@@ -208,7 +208,7 @@ export default function CalibrateScreen() {
 
             {nextCorner && (
               <Text style={[styles.nextHint, { color: nextCorner.color }]}>
-                {t.calibrate.tapCorner} {nextCorner.label}
+                {t.calibrate.tapCorner} {nextCorner.square}
               </Text>
             )}
             {corners.length === 4 && (

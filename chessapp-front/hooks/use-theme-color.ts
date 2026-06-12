@@ -3,7 +3,7 @@
  * https://docs.expo.dev/guides/color-schemes/
  */
 
-import { useTheme } from '../app/contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { Colors } from '../constants/Colors';
 
 export function useThemeColors() {

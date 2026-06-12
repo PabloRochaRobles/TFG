@@ -198,16 +198,14 @@ export const translations = {
       tip2Label: 'Consejo 2:',
       tip2: 'Mantén la estabilidad de la grabación. Usar un tripode o un soporte previene los movimientos de la cámara',
       tip3Label: 'Consejo 3:',
-      tip3: 'Coloca la cámara desde una posición frontal y elevada que permita diferenciar claramente las piezas del tablero.',
+      tip3: 'Coloca la cámara desde una posición cenital que permita diferenciar claramente las piezas del tablero.',
       tip4Label: 'Consejo 4:',
       tip4: 'Mantenga las manos fuera del encuadre y realice movimientos claros.',
-      tip5Label: 'Consejo 5:',
-      tip5: 'Mantener el tablero perpendicular a la cámara incrementa el rendimiento de la detección de movimientos.'
     },
     calibrate: {
       title: 'Calibrar tablero',
       instructions:
-        'Selecciona un vídeo, luego toca las 4 esquinas del tablero en orden:\n1. Superior-Izq (a1) · 2. Superior-Der (a8) · 3. Inferior-Der (h8) · 4. Inferior-Izq (h1)\n\nLa calibración se guarda y se aplica a todos los análisis futuros.',
+        'Selecciona un vídeo, luego toca las 4 esquinas del tablero en orden:\n1. Esquina a1 · 2. Esquinaa8 · 3. Esquina h8 · 4. Esquina h1\n\nLa calibración se guarda y se aplica a todos los análisis futuros.',
       selectVideo: 'Elige un vídeo para calibrar',
       noVideos: 'No hay vídeos disponibles. Sube un vídeo primero.',
       tapCorner: 'Toca la esquina:',
@@ -438,16 +436,14 @@ export const translations = {
       tip2Label: 'Tip 2:',
       tip2: 'Keep the recording stable. Using a tripod or a stand prevents camera movement',
       tip3Label: 'Tip 3:',
-      tip3: 'Position the camera from a frontal and elevated position that allows you to clearly distinguish the pieces on the board.',
+      tip3: 'Place the camera in an overhead position to clearly distinguish the pieces on the board.',
       tip4Label: 'Tip 4:',
       tip4: 'Keep your hands out of frame and make clear movements.',
-      tip5Label: 'Tip 5:',
-      tip5: 'Keeping the board perpendicular to the camera improves movement detection performance.'
     },
     calibrate: {
       title: 'Calibrate Board',
       instructions:
-        'Select a video, then tap the 4 corners of the board in order:\n1. Top-Left (a1) · 2. Top-Right (a8) · 3. Bottom-Right (h8) · 4. Bottom-Left (h1)\n\nThe calibration is saved and applied to all future analyses.',
+        'Select a video, then tap the 4 corners of the board in order:\n1. Corner a1 · 2. Corner a8 · 3. Corner h8 · 4. Corner h1\n\nThe calibration is saved and applied to all future analyses.',
       selectVideo: 'Choose a video to calibrate',
       noVideos: 'No videos available. Upload a video first.',
       tapCorner: 'Tap corner:',

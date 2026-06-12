@@ -23,7 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchWarpedPreview, getFirstFrameUrl, uploadVideo } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 // ── Compresión de vídeo ───────────────────────────────────────────────────────
 // Usa react-native-compressor si está disponible (Development Build / producción).
@@ -89,10 +89,10 @@ async function compressVideoSafe(
 
 // ── Calibración ──────────────────────────────────────────────────────────────
 const CORNER_ORDER = [
-  { key: 'TL', square: 'a1', label: 'Superior-Izq  (a1)', color: '#22c55e' },
-  { key: 'TR', square: 'a8', label: 'Superior-Der  (a8)', color: '#f97316' },
-  { key: 'BR', square: 'h8', label: 'Inferior-Der  (h8)', color: '#ef4444' },
-  { key: 'BL', square: 'h1', label: 'Inferior-Izq  (h1)', color: '#3b82f6' },
+  { key: 'TL', square: 'a1', color: '#22c55e' },
+  { key: 'TR', square: 'a8', color: '#f97316' },
+  { key: 'BR', square: 'h8', color: '#ef4444' },
+  { key: 'BL', square: 'h1', color: '#3b82f6' },
 ];
 type Corner = [number, number]; // coordenadas relativas [0-1]
 
@@ -586,7 +586,7 @@ export default function UploadScreen() {
 
               {nextCorner ? (
                 <Text style={[styles.nextHint, { color: nextCorner.color }]}>
-                  {t.upload.tapCorner} {nextCorner.label}
+                  {t.upload.tapCorner} {nextCorner.square}
                 </Text>
               ) : (
                 <Text style={[styles.nextHint, { color: colors.primary }]}>
@@ -824,7 +824,7 @@ export default function UploadScreen() {
                   <VideoView
                     player={player}
                     style={styles.player}
-                    allowsFullscreen
+                    fullscreenOptions={{ enable: true }}
                     allowsPictureInPicture={false}
                   />
                 </View>

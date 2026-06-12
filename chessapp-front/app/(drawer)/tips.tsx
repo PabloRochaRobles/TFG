@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function TipsScreen() {
   const navigation = useNavigation();
@@ -59,11 +59,6 @@ export default function TipsScreen() {
             <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip4Label}</Text>
               <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip4}</Text>
-            </View>
-
-            <View style={[styles.stepBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.stepTitle, { color: colors.text }]}>{t.tips.tip5Label}</Text>
-              <Text style={[styles.stepDescription, { color: colors.text }]}>{t.tips.tip5}</Text>
             </View>
           </View>
         </ScrollView>

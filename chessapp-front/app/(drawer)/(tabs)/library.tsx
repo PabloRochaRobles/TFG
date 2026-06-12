@@ -3,7 +3,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { DrawerActions } from '@react-navigation/native';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -16,11 +15,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { API_BASE_URL, deleteVideo, listVideos } from '@/constants/api';
+import VideoPreview from '@/components/VideoPreview';
+import { deleteVideo, listVideos } from '@/constants/api';
 import { useThemeColors } from '@/hooks/use-theme-color';
 import { useTranslation } from '@/hooks/use-translation';
-import { tokenStore } from '../../lib/tokenStorage';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 // ── Tarjeta individual de vídeo ──────────────────────────────────────────────
 type VideoCardProps = {
@@ -35,28 +34,9 @@ function VideoCard({ fileName, isAnalyzed, onDelete, onAnalyze }: VideoCardProps
   const { isDarkMode } = useTheme();
   const t = useTranslation();
 
-  // El stream del vídeo requiere JWT en el backend; expo-video acepta
-  // headers en la fuente, así que añadimos Authorization manualmente.
-  const access = tokenStore.getAccess();
-  const player = useVideoPlayer(
-    {
-      uri: `${API_BASE_URL}/api/partidas/stream/${fileName}/`,
-      headers: {
-        'ngrok-skip-browser-warning': 'true',
-        ...(access ? { Authorization: `Bearer ${access}` } : {}),
-      },
-    },
-    (p) => { p.loop = false; },
-  );
-
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <VideoView
-        player={player}
-        style={styles.cardVideo}
-        allowsFullscreen
-        allowsPictureInPicture={false}
-      />
+      <VideoPreview fileName={fileName} style={styles.cardVideo} />
       <View style={styles.cardActions}>
         <TouchableOpacity
           style={[

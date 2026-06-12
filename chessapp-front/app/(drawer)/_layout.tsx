@@ -7,9 +7,9 @@ import { Drawer } from 'expo-router/drawer';
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../contexts/AuthContext';
-import { LANGUAGES, useLanguage } from '../contexts/LanguageContext';
-import { useTheme } from '../contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { LANGUAGES, useLanguage } from '@/contexts/LanguageContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 function CustomDrawerContent(props: any) {
   const router = useRouter();
